@@ -1,0 +1,298 @@
+---
+title: "Untitled"
+author: "MD"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(knitr)
+library(ANCOMBC)
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(ggplot2)
+library(phyloseq)
+library(tibble)
+library(lme4)
+library(Matrix)
+library(reshape2)
+library(mia)
+library (microbiome)
+library(cowplot)
+```
+
+
+```{r}
+FUN <- read.csv("Data/EJM-CLS-22F_pct98.csv")
+BAC <- read.csv("Data/EJM-CLS-22B_pct98.csv")
+BAC <- BAC[!is.na(BAC$Kingdom),]
+FUN <- FUN[FUN$Kingdom =="k__Fungi",]
+FUN <- FUN[!is.na(FUN$Kingdom),]
+
+SAMPLE_DATA <- as.data.frame(read_xlsx("Data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+
+#converts "OTU" column to rownames for all objects
+rownames(FUN) <- FUN$X
+FUN <- FUN[,-1]
+rownames(BAC) <- BAC$X
+BAC <- BAC[,-1]
+
+###adds taxonomic prefixes to bacterial tax tables
+BAC$Kingdom<-sub("^","k__",BAC$Kingdom)
+BAC$Kingdom<-sub("k__NA",NA,BAC$Kingdom)
+BAC$Phylum<-sub("^","p__",BAC$Phylum)
+BAC$Phylum<-sub("p__NA",NA,BAC$Phylum)
+BAC$Class<-sub("^","c__",BAC$Class)
+BAC$Class<-sub("c__NA",NA,BAC$Class)
+BAC$Order<-sub("^","o__",BAC$Order)
+BAC$Order<-sub("o__NA",NA,BAC$Order)
+BAC$Family<-sub("^","f__",BAC$Family)
+BAC$Family<-sub("f__NA",NA,BAC$Family)
+BAC$Genus<-sub("^","g__",BAC$Genus)
+BAC$Genus<-sub("g__NA",NA,BAC$Genus)
+BAC$Species<-sub("^","s__",BAC$Species)
+BAC$Species<-sub("s__NA",NA,BAC$Species)
+
+###converts Participant.ID, composting, and relevant biopesticides to factors
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+
+#########Generates well formated object for taxonomy, OTU abundance, and sample data
+###converts otu tables and tax tables to matrices
+FUN_OTU<- FUN[,8:length(colnames(FUN))]
+FUN_TAX <- FUN[,1:7]
+BAC_OTU<- BAC[,8:length(colnames(BAC))]
+BAC_TAX <- BAC[,1:7]
+
+##replaces values containing "unknown" or "incertae sedis" with NA
+BAC_TAX <- as.data.frame(BAC_TAX)
+FUN_TAX <- as.data.frame(FUN_TAX)
+
+BAC_TAX$Species[grep('incertae', BAC_TAX$Species, ignore.case = TRUE)] <- NA
+BAC_TAX$Species[grep('unknown', BAC_TAX$Species, ignore.case = TRUE)] <- NA
+BAC_TAX$Genus[grep('incertae', BAC_TAX$Genus, ignore.case = TRUE)] <- NA
+BAC_TAX$Genus[grep('unknown', BAC_TAX$Genus, ignore.case = TRUE)] <- NA
+BAC_TAX$Family[grep('incertae', BAC_TAX$Family, ignore.case = TRUE)] <- NA
+BAC_TAX$Family[grep('unknown', BAC_TAX$Family, ignore.case = TRUE)] <- NA
+FUN_TAX$Species[grep('incertae', FUN_TAX$Species, ignore.case = TRUE)] <- NA
+FUN_TAX$Species[grep('unknown', FUN_TAX$Species, ignore.case = TRUE)] <- NA
+FUN_TAX$Genus[grep('incertae', FUN_TAX$Genus, ignore.case = TRUE)] <- NA
+FUN_TAX$Genus[grep('unknown', FUN_TAX$Genus, ignore.case = TRUE)] <- NA
+FUN_TAX$Family[grep('incertae', FUN_TAX$Family, ignore.case = TRUE)] <- NA
+FUN_TAX$Family[grep('unknown', FUN_TAX$Family, ignore.case = TRUE)] <- NA
+
+##includes genus name in species column
+BAC_TAX$Species <- if_else(is.na(BAC_TAX$Species),NA,paste(BAC_TAX$Genus,"_",BAC_TAX$Species,sep = ""))
+FUN_TAX$Species <- if_else(is.na(FUN_TAX$Species),NA,paste("s__",substr(FUN_TAX$Genus, 4, nchar(FUN_TAX$Genus)),"_",substr(FUN_TAX$Species, 4, nchar(FUN_TAX$Species)),sep = ""))
+
+###makes a new df of OTU# and the deepest taxonomy alignment for each bacterial and fungal OTU (again, not the most elegant solution :)
+bac_combined_tax <- if_else(BAC_TAX$Species == "_","test_true",BAC_TAX$Species, missing = BAC_TAX$Genus)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Family)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Order)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Class)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Phylum)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Kingdom)
+bac_combined_tax <- melt(data.frame(rownames(BAC_TAX),bac_combined_tax))
+colnames(bac_combined_tax) <- c("OTU", "taxon")
+
+fun_combined_tax <- if_else(FUN_TAX$Species == "_","test_true",FUN_TAX$Species, missing = FUN_TAX$Genus)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Family)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Order)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Class)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Phylum)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Kingdom)
+fun_combined_tax <- melt(data.frame(rownames(FUN_TAX),fun_combined_tax))
+colnames(fun_combined_tax) <- c("OTU", "taxon")
+
+###converts sample number and compost to a factor
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+SAMPLE_DATA$Compost <- factor(SAMPLE_DATA$Compost, levels = c("NONE","COMP"))
+
+#generates object for differential abundance analysis
+SAMPLE_DATA_LAB <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[!is.na(SAMPLE_DATA_LAB$Collection_Date),]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[SAMPLE_DATA_LAB$Collection_Date!="45777",]
+rownames(SAMPLE_DATA_LAB) <- SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER
+
+FUN_OTU <- FUN_OTU[,colnames(FUN_OTU)%in%SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER]
+BAC_OTU <- BAC_OTU[,colnames(BAC_OTU)%in%SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER]
+
+#Removes OTUs with only 1 read in the whole dataset
+BAC_OTU <- BAC_OTU[rowSums(BAC_OTU)>1,]
+FUN_OTU <- FUN_OTU[rowSums(FUN_OTU)>1,]
+
+
+###converts otu tables and tax tables to matrices
+FUN_OTU<- as.matrix(FUN_OTU)
+FUN_TAX <- as.matrix(FUN_TAX)
+BAC_OTU<- as.matrix(BAC_OTU)
+BAC_TAX <- as.matrix(BAC_TAX)
+
+
+####generates phyloseq objects from each dataset
+##FUN
+OTU = otu_table(FUN_OTU, taxa_are_rows = TRUE)
+TAX = tax_table(FUN_TAX)
+samples = sample_data(SAMPLE_DATA_LAB)
+sample_names(SAMPLE_DATA_LAB) <- SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER
+FUN_phyloseq <- phyloseq(OTU, TAX, samples)
+##BAC
+OTU = otu_table(BAC_OTU, taxa_are_rows = TRUE)
+TAX = tax_table(BAC_TAX)
+samples = sample_data(SAMPLE_DATA_LAB)
+sample_names(SAMPLE_DATA_LAB) <- SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER
+BAC_phyloseq <- phyloseq(OTU, TAX, samples)
+
+
+###makes tree summarized experiment objects from for each subset
+lab_bac_compost_tse = mia::convertFromPhyloseq(BAC_phyloseq)
+lab_fun_compost_tse = mia::convertFromPhyloseq(FUN_phyloseq)
+```
+
+# Runs ancombc
+```{r}
+###runs ancombc2 again for fungi and bacteria, but at the species level
+#for bacteria
+set.seed(123)
+Sys.time()
+compost_ancom_bac_SPE = ancombc2(data = lab_bac_compost_tse, assay_name = "counts",tax_level = "Species",
+                                 fix_formula = "Compost*Slurry",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+#for fungi
+set.seed(123)
+Sys.time()
+compost_ancom_fun_SPE = ancombc2(data = lab_fun_compost_tse, assay_name = "counts",tax_level = "Species",
+                                 fix_formula = "Compost*Slurry",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+
+saveRDS(compost_ancom_bac_SPE, file = 'Data/output/Long_read_compost_ancom_bac_SPE.rds', ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(compost_ancom_fun_SPE, file = 'Data/output/Long_read_compost_ancom_fun_SPE.rds', ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+
+
+compost_ancom_bac_SPE <- readRDS(file = 'Data/output/Long_read_compost_ancom_bac_SPE.rds', refhook = NULL)
+compost_ancom_fun_SPE <- readRDS(file = 'Data/output/Long_read_compost_ancom_fun_SPE.rds', refhook = NULL)
+```
+
+## Generates figure
+```{r}
+################Generates figures from ancombc results
+
+##########Bacteria Species level
+###makes a df of primary results from ANCOMBC2 output for figure generation. Same code can be used for fungal and bacterial, compost and spinosad data by changing input objects
+res_prim = compost_ancom_bac_SPE$res
+
+###makes a dataframe with only the data used for the figure (p value of <0.01 and passing sensitivity test)
+#also converts "OTU" and "direct" variables to factors
+# df_fig_compost = res_prim %>%
+#   dplyr::filter(p_CompostCOMP <0.01) %>%
+#   dplyr::arrange(desc(lfc_CompostCOMP)) %>%
+#   dplyr::filter(passed_ss_CompostCOMP == 1) %>%
+#   dplyr::mutate(direct = ifelse(lfc_CompostCOMP > 0, "Positive LFC", "Negative LFC"))
+# df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
+# df_fig_compost$direct = factor(df_fig_compost$direct, 
+#                                levels = c("Positive LFC", "Negative LFC"))
+df_fig_compost = res_prim %>%
+  dplyr::filter(p_Compost1 <0.01) %>%
+  dplyr::arrange(desc(lfc_Compost1)) %>%
+  dplyr::filter(passed_ss_Compost1 == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_Compost1 > 0, "Positive LFC", "Negative LFC"))
+df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
+df_fig_compost$direct = factor(df_fig_compost$direct, 
+                               levels = c("Positive LFC", "Negative LFC"))
+
+###makes figure
+fig_bac_spe = df_fig_compost %>%
+  ggplot(aes(x = taxon, y = lfc_Compost1, fill = direct)) + 
+  geom_bar(stat = "identity", width = 0.7, color = "black", 
+           position = position_dodge(width = 0.4)) +
+  scale_x_discrete(labels=df_fig_compost$taxon) +
+  geom_errorbar(aes(ymin = lfc_Compost1 - se_Compost1, ymax = lfc_Compost1 + se_Compost1), 
+                width = 0.2, position = position_dodge(0.05), color = "black") +  
+  scale_fill_manual(values=c("#666666","#CCCCCC"))+
+  labs(x = NULL, y = "Log fold change in abundance\nby compost", 
+       title = "") + 
+  scale_color_discrete(name = NULL) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor.y = element_blank(),
+        axis.text.x = element_text(angle = 67, hjust = 1,
+                                   color = df_fig_compost$color),
+        legend.position = "right", strip.text = element_text(size = 15, color = "black"), 
+        axis.title = element_text(size = 12, color = "black"),
+        axis.text = element_text(size = 10, color = "black"));fig_bac_spe
+write.csv(df_fig_compost,"Data/output/Long_read_bac_ancom_SPE_figure_data.csv")
+ write.csv(df_fig_compost,"Data/output/Long_read_bac_ancom_SPE_figure_data.csv")
+
+##########fungi species level
+###makes a df of primary results from ANCOMBC2 output for figure generation. Same code can be used for fungal and bacterial, compost and spinosad data by changing input objects
+res_prim = compost_ancom_fun_SPE$res
+
+###makes a dataframe with only the data used for the figure (p value of <0.01 and passing sensitivity test)
+#also converts "OTU" and "direct" variables to factors
+df_fig_compost = res_prim %>%
+  dplyr::filter(p_CompostCOMP <0.01) %>%
+  dplyr::arrange(desc(lfc_CompostCOMP)) %>%
+  dplyr::filter(passed_ss_CompostCOMP == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_CompostCOMP > 0, "Positive LFC", "Negative LFC"))
+df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
+df_fig_compost$direct = factor(df_fig_compost$direct, 
+                               levels = c("Positive LFC", "Negative LFC"))
+
+###makes figure
+fig_fun_spe = df_fig_compost %>%
+  ggplot(aes(x = taxon, y = lfc_CompostCOMP, fill = direct)) + 
+  geom_bar(stat = "identity", width = 0.7, color = "black", 
+           position = position_dodge(width = 0.4)) +
+  scale_x_discrete(labels=df_fig_compost$taxon) +
+  geom_errorbar(aes(ymin = lfc_CompostCOMP - se_CompostCOMP, ymax = lfc_CompostCOMP + se_CompostCOMP), 
+                width = 0.2, position = position_dodge(0.05), color = "black") +  
+  scale_fill_manual(values=c("#666666","#CCCCCC"))+
+  labs(x = NULL, y = "Log fold change in abundance\nby compost", 
+       title = "") + 
+  scale_color_discrete(name = NULL) +
+  theme(plot.title = element_text(hjust = 0.5),
+        panel.grid.minor.y = element_blank(),
+        axis.text.x = element_text(angle = 60, hjust = 1,
+                                   color = df_fig_compost$color),
+        legend.position = "none", strip.text = element_text(size = 15, color = "black"), 
+        axis.title = element_text(size = 15, color = "black"),
+        axis.text = element_text(size = 12, color = "black"));fig_fun_spe
+write.csv(df_fig_compost,"Data/output/Long_read_fun_ancom_SPE_figure_data.csv")
+```
+
+## Makes figure together
+```{r}
+########Saves all figures
+
+ggsave(filename = "Long_read_fig_bac_spe.svg", plot = fig_bac_spe,
+       width = 18, height = 7, device = "svg")
+ggsave(filename = "Long_read_fig_fun_spe.svg", plot = fig_fun_spe,
+       width = 18, height = 7, device = "svg")
+
+
+```
+

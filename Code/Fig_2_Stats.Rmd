@@ -1,0 +1,366 @@
+---
+title: "Fig_2_Stats"
+author: "MD"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(vegan)
+library(pairwiseAdonis)
+library(tidyverse)
+library(phyloseq)
+library(mia)
+library(patchwork)
+library(tidySummarizedExperiment)
+library(ALDEx2)
+library(MicrobiomeStat)
+library(knitr)
+library(tidyverse)
+library(ape)
+library(paletteer)
+library(microbiome)
+library(TreeSummarizedExperiment)
+library(DESeq2)
+library(M3C)
+library(vegan)
+library(scales)
+library(colorRamp2)
+library(readxl)
+library(cowplot)
+```
+
+# Ordination 
+
+```{r}
+FUN <- read.csv("Data/EJM-CLS-22F_pct98.csv")
+BAC <- read.csv("Data/EJM-CLS-22B_pct98.csv")
+BAC <- BAC[!is.na(BAC$Kingdom),]
+FUN <- FUN[FUN$Kingdom =="k__Fungi",]
+FUN <- FUN[!is.na(FUN$Kingdom),]
+SAMPLE_DATA <- as.data.frame(read_xlsx("Data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+rownames(FUN) <- FUN$X
+FUN <- FUN[,-1]
+rownames(BAC) <- BAC$X
+BAC <- BAC[,-1]
+
+###adds taxonomic prefixes to bacterial tax tables
+BAC$Kingdom<-sub("^","k__",BAC$Kingdom)
+BAC$Kingdom<-sub("k__NA",NA,BAC$Kingdom)
+BAC$Phylum<-sub("^","p__",BAC$Phylum)
+BAC$Phylum<-sub("p__NA",NA,BAC$Phylum)
+BAC$Class<-sub("^","c__",BAC$Class)
+BAC$Class<-sub("c__NA",NA,BAC$Class)
+BAC$Order<-sub("^","o__",BAC$Order)
+BAC$Order<-sub("o__NA",NA,BAC$Order)
+BAC$Family<-sub("^","f__",BAC$Family)
+BAC$Family<-sub("f__NA",NA,BAC$Family)
+BAC$Genus<-sub("^","g__",BAC$Genus)
+BAC$Genus<-sub("g__NA",NA,BAC$Genus)
+BAC$Species<-sub("^","s__",BAC$Species)
+BAC$Species<-sub("s__NA",NA,BAC$Species)
+
+###converts Participant.ID, composting, and relevant biopesticides to factors
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+
+#########Generates well formated object for taxonomy, OTU abundance, and sample data
+###converts otu tables and tax tables to matrices
+FUN_OTU<- FUN[,8:length(colnames(FUN))]
+FUN_TAX <- FUN[,1:7]
+BAC_OTU<- BAC[,8:length(colnames(BAC))]
+BAC_TAX <- BAC[,1:7]
+
+#Removes OTUs with only 1 read in the whole dataset
+BAC_OTU <- BAC_OTU[rowSums(BAC_OTU)>1,]
+FUN_OTU <- FUN_OTU[rowSums(FUN_OTU)>1,]
+
+#removes samples with less than 3000 reads
+BAC_OTU <- BAC_OTU[,colSums(BAC_OTU)>1000]
+FUN_OTU <- FUN_OTU[,colSums(FUN_OTU)>1000]
+
+colSums(BAC_OTU)
+
+###converts relevant column to rownames to each object
+rownames(SAMPLE_DATA)<- SAMPLE_DATA$SEQUENCED_INV_NUMBER
+
+#####Generates ordinations for each dataset
+
+#BAC_FIELD
+#################################################################
+SAMPLE_DATA_FIELD <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="FIELD",]
+
+
+
+#limits otu table to only samples used in compost study
+OTU <- BAC_OTU[,colnames(BAC_OTU) %in% rownames(SAMPLE_DATA_FIELD)]
+
+
+#Removes OTUs absent from all relevant samples
+OTU <- OTU[rowSums(OTU)>1,]
+OTU <- as.matrix(OTU)
+TAX = BAC_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_FIELD[colnames(OTU),]
+
+#write.csv(samples, "Data/output/sample_data_field_switch_samples_bac.csv") # REM and NWF got switched in the second year. I read out the table to correct and then read back in.
+samples <- read.csv("Data/output/sample_data_field_switch_samples_bac.csv")
+
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+
+
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+P.bac <- convertToPhyloseq(em_tse,assay.type = "counts")
+P.bac = transform_sample_counts(P.bac, function(x) x / sum(x))
+saveRDS(P.bac, "Data/output/P.bac.fourfields.RDS")
+
+#FUNGI
+SAMPLE_DATA_FIELD <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="FIELD",]
+#limits otu table to only samples used in compost study
+OTU <- FUN_OTU[,colnames(FUN_OTU) %in% rownames(SAMPLE_DATA_FIELD)]
+
+
+#Removes OTUs absent from all relevant samples
+OTU <- OTU[rowSums(OTU)>1,]
+OTU <- as.matrix(OTU)
+TAX = FUN_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_FIELD[colnames(OTU),]
+
+#write.csv(samples, "Data/output/sample_data_field_switch_samples_fun.csv") # REM and NWF got switched in the second year. I read out the table to correct and then read back in.
+samples <- read.csv("Data/output/sample_data_field_switch_samples_fun.csv")
+
+
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+P.fun <- convertToPhyloseq(em_tse,assay.type = "counts")
+P.fun = transform_sample_counts(P.fun, function(x) x / sum(x))
+saveRDS(P.fun, "Data/output/P.fun.fourfields.RDS")
+```
+
+```{r}
+d <- data.frame(sample_data(P.fun))
+#d <- read.csv("Data/output/d.rev.fun.csv")
+d$Year <- as.factor(d$Year)
+data <- data.frame(t(otu_table(P.fun)))
+data <- decostand(data, method='hellinger')
+
+dist <- vegdist(data, method='bray')
+adonis2(dist ~  Year, data=d, perm=999)
+pairwise.adonis(dist,factors=d$Year, p.adjust.m = "fdr")
+
+ord <- capscale(dist ~ Year*Farm, data=d)
+ev <- eigenvals(ord)
+Axis1_exp = round(ev[1] / sum(ev) * 100, 1)
+Axis2_exp = round(ev[2] / sum(ev) * 100, 1)
+
+
+axes <- as.data.frame(vegan::scores(ord, display="sites", choices=c(1:2)))
+axes <- cbind(d, axes)
+
+p<-ggplot(data=axes, aes(x=CAP1, y=CAP2, fill=Farm, shape=Year)) +
+  geom_point(size=6,color='black') +
+ # stat_ellipse(aes(group= Farm, color= Farm), type='t', level=0.95) +
+  scale_fill_manual(values = c('firebrick','darkorange','darkslategray1','darkblue','dodgerblue'))+
+  scale_color_manual(values = c('firebrick','darkorange','darkslategray1','darkblue','dodgerblue'))+
+  scale_shape_manual(values=c(21,22)) +
+  guides(fill = guide_legend(
+    override.aes=list(shape = rep(21)))) +
+  labs(x=paste0('CAP1 (', Axis1_exp, '%)'), 
+       y=paste0('CAP2 (', Axis2_exp, '%)')) +
+  theme_classic();p
+```
+
+## PCOA
+### bacteria 
+```{r}
+data <- data.frame(t(otu_table(P.bac)))
+data <- decostand(data, method='hellinger')
+dist <- vegdist(data, method='bray')
+# Perform PCoA using cmdscale
+pcoa_results <- cmdscale(dist, k = 2, eig = TRUE, add = TRUE) # `add=TRUE` handles negative eigenvalues
+# Extract the PCoA positions (coordinates for the plot)
+pcoa_positions <- as_tibble(pcoa_results$points)
+colnames(pcoa_positions) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points <- scores(pcoa_results)
+points<- as.data.frame(points)
+colnames(points) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points$SEQUENCED_INV_NUMBER <- rownames(points)
+
+
+# Calculate the percentage of variation explained by each axis
+eigenvalues <- pcoa_results$eig
+percent_explained_PC1 <- round(100 * eigenvalues[1] / sum(eigenvalues), 1)
+percent_explained_PC2 <- round(100 * eigenvalues[2] / sum(eigenvalues), 1)
+# Combine the PCoA coordinates with sample metadata
+# Ensure row names match between metadata and the original data
+d <- data.frame(sample_data(P.bac))
+pcoa_data <- dplyr::inner_join(points,d, by = "SEQUENCED_INV_NUMBER")
+pcoa_data$Year <- as.factor(pcoa_data$Year)
+ggplot(pcoa_data, aes(x = PCoA1, y = PCoA2, color = Farm, shape = Year)) + # Color and shape by a metadata variable
+  geom_point(size = 3) + # Adjust point size and transparency
+  labs(
+    x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = ""),
+    title = "PCoA Plot with Bray-Curtis Distance"
+  ) +
+  theme_bw() + # Use a clean theme
+  coord_fixed() # Ensures axes are scaled equally
+
+beta_bac <- ggplot(data = pcoa_data, aes(x=PCoA1,y=PCoA2)) +
+  geom_point(aes(color = Farm, shape = Year, size = 5)) +
+  scale_color_manual(values = c("#EC7063","#82E0AA","#5DADE2","#F7DC6F"))+
+  labs(x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = "")) +
+  guides(size = "none", color = guide_legend(title = "Farm ID", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12)),position = "bottom"),
+         shape = guide_legend(title = "Year", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12)),position = "bottom",ncol=1))+
+  theme(legend.position = "none");beta_bac
+
+```
+
+### Fungi
+
+```{r}
+data <- data.frame(t(otu_table(P.fun)))
+data <- decostand(data, method='hellinger')
+dist <- vegdist(data, method='bray')
+# Perform PCoA using cmdscale
+pcoa_results <- cmdscale(dist, k = 2, eig = TRUE, add = TRUE) # `add=TRUE` handles negative eigenvalues
+# Extract the PCoA positions (coordinates for the plot)
+pcoa_positions <- as_tibble(pcoa_results$points)
+colnames(pcoa_positions) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points <- scores(pcoa_results)
+points<- as.data.frame(points)
+colnames(points) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points$SEQUENCED_INV_NUMBER <- rownames(points)
+
+
+# Calculate the percentage of variation explained by each axis
+eigenvalues <- pcoa_results$eig
+percent_explained_PC1 <- round(100 * eigenvalues[1] / sum(eigenvalues), 1)
+percent_explained_PC2 <- round(100 * eigenvalues[2] / sum(eigenvalues), 1)
+# Combine the PCoA coordinates with sample metadata
+# Ensure row names match between metadata and the original data
+d <- data.frame(sample_data(P.fun))
+pcoa_data <- dplyr::inner_join(points,d, by = "SEQUENCED_INV_NUMBER")
+pcoa_data$Year <- as.factor(pcoa_data$Year)
+
+beta_fun <- ggplot(data = pcoa_data, aes(x=PCoA1,y=PCoA2)) +
+  geom_point(aes(color = Farm, shape = Year, size = 5)) +
+  scale_color_manual(values = c("#EC7063","#82E0AA","#5DADE2","#F7DC6F"))+
+  labs(x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = "")) +
+  guides(size = "none", color = guide_legend(title = "Farm ID", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12)),position = "bottom"),
+         shape = guide_legend(title = "Year", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12)),position = "bottom",ncol=1))+
+  theme(legend.position = "none");beta_fun
+```
+
+
+```{r}
+FIELD_PLOT <- plot_grid(beta_bac, beta_fun, labels = c('B', 'C'), nrow = 1, ncol = 2, rel_widths = c(1, 1))
+FIELD_PLOT
+ggsave(filename = "Data/output/Field_sample_ordination.svg", plot = FIELD_PLOT,
+       width = 11, height = 4, device = "svg")
+```
+
+# Aphid bioassay
+
+```{r}
+data <- read_xlsx("Data/HATCH_compost_bioassay_data.xlsx",sheet = "Formatted for R")
+
+#removes treatments without a single F1 aphid, treatments sampled early, and treatments where the leaf containing the aphid snapped
+data <- data[data$F1==1&!is.na(data$F1),]
+data <- data[data$NOTES!="SAMPLED ONE DAY EARLY"|is.na(data$NOTES),]
+data <- data[data$PETIOLE_SNAP!="O"|is.na(data$PETIOLE_SNAP),]
+
+#soil moisture by treatment(no sterile only)
+data$combined <- paste(data$SLURRY,data$COMPOST)
+fill_colors = c("#FFFFFF","#aaaaaa","#EC7063","#B03A2E","#5DADE2","#21618C","#82E0AA","#239B56","#F7DC6F","#D4AC0D","#EC7063","#B03A2E","#5DADE2","#21618C")
+data$combined = factor(data$combined, levels=c('HOAG NONE','HOAG COMP','CROSS NONE','CROSS COMP','REM NONE','REM COMP','NMF NONE', 'NMF COMP', 'TT NONE', 'TT COMP', 'SCROSS NONE', 'SCROSS COMP', 'SREM NONE','SREM COMP'))
+data$F2 <- as.numeric(data$F2)
+data$population <- data$F2 + 1
+
+#Formats data to only for figure 2C
+figure_2C <- data[data$SLURRY=="REM"|data$SLURRY=="CROSS"|data$SLURRY=="TT"|data$SLURRY=="NMF",]
+figure_2C <- figure_2C[figure_2C$COMPOST=="NONE"|figure_2C$COMPOST=="COMP",]
+figure_2C <- figure_2C[figure_2C$EXPERIMENT==1|figure_2C$EXPERIMENT==4,]
+figure_2C$EXPERIMENT[figure_2C$EXPERIMENT==1] <- "2023"
+figure_2C$EXPERIMENT[figure_2C$EXPERIMENT==4] <- "2024"
+# Subset by year
+d.2023 <- filter(figure_2C, EXPERIMENT == "2023")
+d.2024 <- filter(figure_2C, EXPERIMENT == "2024")
+mod <- lm(population~COMPOST*SLURRY, data=d.2023)
+par(mfrow=c(2,2))
+plot(mod)
+Anova(mod, Type = 3)
+
+
+#Runs statistical analysis of data for figure 2C
+g2C <- glmmTMB(population~COMPOST*SLURRY*EXPERIMENT, data=figure_2C)
+mod <- lm(population~COMPOST*SLURRY*EXPERIMENT, data=figure_2C)
+par(mfrow=c(2,2))
+plot(mod)
+summary(g2C)
+Anova(mod, Type = 3)
+emmip(mod, COMPOST ~ SLURRY | EXPERIMENT, CIs = TRUE)
+
+joint_tests(g2C)
+FIG_2C_STAT <- emmeans(g2C, pairwise ~ COMPOST|SLURRY|EXPERIMENT, p.adjust = "none")
+emmeans(g2C, pairwise ~ SLURRY|EXPERIMENT, p.adjust = "none")
+emmeans(g2C, pairwise ~ EXPERIMENT|SLURRY|COMPOST, p.adjust = "none")
+FIG_2C_SUMMARY <- summary(FIG_2C_STAT$emmeans)
+FIG_2C_CONTRASTS <- summary(FIG_2C_STAT$contrasts)
+
+df <- as.data.frame(emmeans(mod, ~ SLURRY*EXPERIMENT))
+
+res <- emmeans(mod, list(pairwise ~ SLURRY*EXPERIMENT), adjust = "fdr")
+plot(res[[1]], horizontal=F)
+groups <- data.frame(multcomp::cld(res[[1]], adjust='fdr', Letters=c("abcdefghijklmnopqrstuvwxy"), decreasing=T)) %>% 
+  dplyr::select(., SLURRY, EXPERIMENT, .group)
+
+df <- dplyr::inner_join(df,groups, by = c('SLURRY', 'EXPERIMENT'))
+
+names(df)[names(df) == '.group'] <- 'letters'
+df$letters <- gsub(' ','',df$letters)
+
+# setwd("/Users/clare/Library/CloudStorage/Box-Box/Ethan_M/Projects/Composting Project/Aphid bioassay data")
+# write.csv(FIG_2C_SUMMARY, "FIG_2C_SUMMARY.csv", row.names = FALSE)
+# write.csv(FIG_2C_CONTRASTS, "FIG_2C_CONTRASTS.csv", row.names = FALSE)
+
+figure_2C$letters <- ifelse(figure_2C$SLURRY == "REM" & figure_2C$EXPERIMENT == "2023", "c",  
+                            ifelse(figure_2C$SLURRY == "REM" & figure_2C$EXPERIMENT == "2024", "ab",
+                                   ifelse(figure_2C$SLURRY == "CROSS" & figure_2C$EXPERIMENT == "2023", "c",
+                                          ifelse(figure_2C$SLURRY == "CROSS" & figure_2C$EXPERIMENT == "2024", "b",
+                                                 ifelse(figure_2C$SLURRY == "NMF" & figure_2C$EXPERIMENT == "2023", "c",
+                                                        ifelse(figure_2C$SLURRY == "NMF" & figure_2C$EXPERIMENT == "2024", "ab",
+                                                               ifelse(figure_2C$SLURRY == "TT" & figure_2C$EXPERIMENT == "2023", "c",
+                                                                      ifelse(figure_2C$SLURRY == "TT" & figure_2C$EXPERIMENT == "2024", "a",NA))))))))
+
+#Generates figure 2D
+plot_2D <- ggplot(data = figure_2C, aes(combined, population, fill = combined)) +
+  geom_bar(stat = "summary", position = "dodge") +
+  geom_errorbar(stat = "summary", position = "dodge", width=0.4, alpha=0.9, linewidth=1.3) +
+  geom_jitter(width = 0.1, height = 0) +
+geom_text(stat = "summary", aes(label = letters),position=position_dodge(0.9), vjust = -3, hjust = -0.2, size = 5)+
+  scale_fill_manual(values=fill_colors[3:10]) +
+  scale_x_discrete(labels=c('Farm 1\nNo Compost','Farm 1\nCompost','Farm 2\nNo Compost','Farm 2\nCompost','Farm 3\nNo Compost','Farm 3\nCompost','Farm 4\nNo Compost','Farm 4\nCompost'))+
+  facet_grid(rows = vars(EXPERIMENT)) +
+  labs(x = "", y = "Aphid Population After 9 Days") + 
+  ylim(0, 25) +
+  theme(legend.position = "none", strip.text = element_text(size = 12, color = "black"), 
+        axis.title = element_text(size = 12, color = "black"),
+        axis.text = element_text(size = 12, color = "black"));plot_2D
+plot_2D<- plot_grid(plot_2D, nrow = 1,ncol = 1,labels = c('D'))
+plot_2D
+
+ggsave(filename = "Data/output/Figure_2D_letters.svg", plot = plot_2D,
+       width = 15, height = 8, device = "svg")
+```
+

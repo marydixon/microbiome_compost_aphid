@@ -1,0 +1,719 @@
+---
+title: "Fig_3_Stats"
+author: "MD"
+date: "`r Sys.Date()`"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#########################
+#Ordination. Updated version using microbiome clusters
+#Updated on 9/22/25 for Revision 2.
+#########################
+
+#Loading of the packages
+###########
+library(mia)
+library(patchwork)
+library(tidySummarizedExperiment)
+library(ALDEx2)
+library(MicrobiomeStat)
+library(knitr)
+library(tidyverse)
+library(ape)
+library(paletteer)
+library(microbiome)
+library(TreeSummarizedExperiment)
+library(DESeq2)
+library(M3C)
+library(vegan)
+library(scales)
+library(colorRamp2)
+library(readxl)
+library(cowplot)
+library(glmmTMB)
+library(pairwiseAdonis)
+library(car)
+library(emmeans)
+###########
+```
+
+# Ordination
+
+## Read in data 
+```{r}
+#imports fungal and bacterial nanopore sequencing data .csv files of field soils and potting soils 
+#FUN <- read.csv("C:/Users/AG-PLP-cclabuser/Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Current formatted data/EJM-CLS-22F.csv")
+#BAC <- read.csv("C:/Users/AG-PLP-cclabuser/Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Current formatted data/EJM-CLS-22B.csv")
+# FUN <- read.csv("/Users/clare/Library/CloudStorage/Box-Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Current formatted data/EJM-CLS-22F_pct98.csv")
+# BAC <- read.csv("/Users/clare/Library/CloudStorage/Box-Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Current formatted data/EJM-CLS-22B_pct98.csv")
+FUN <- read.csv("Data/EJM-CLS-22F_pct98.csv")
+BAC <- read.csv("Data/EJM-CLS-22B_pct98.csv")
+BAC <- BAC[!is.na(BAC$Kingdom),]
+FUN <- FUN[FUN$Kingdom =="k__Fungi",]
+FUN <- FUN[!is.na(FUN$Kingdom),]
+#SAMPLE_DATA <- as.data.frame(read_xlsx("C:/Users/AG-PLP-cclabuser/Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Current formatted data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+# SAMPLE_DATA <- as.data.frame(read_xlsx("/Users/clare/Library/CloudStorage/Box-Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Current formatted data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+SAMPLE_DATA <- as.data.frame(read_xlsx("Data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+
+#converts "OTU" column to rownames for all objects
+rownames(FUN) <- FUN$X
+FUN <- FUN[,-1]
+rownames(BAC) <- BAC$X
+BAC <- BAC[,-1]
+
+###adds taxonomic prefixes to bacterial tax tables
+BAC$Kingdom<-sub("^","k__",BAC$Kingdom)
+BAC$Kingdom<-sub("k__NA",NA,BAC$Kingdom)
+BAC$Phylum<-sub("^","p__",BAC$Phylum)
+BAC$Phylum<-sub("p__NA",NA,BAC$Phylum)
+BAC$Class<-sub("^","c__",BAC$Class)
+BAC$Class<-sub("c__NA",NA,BAC$Class)
+BAC$Order<-sub("^","o__",BAC$Order)
+BAC$Order<-sub("o__NA",NA,BAC$Order)
+BAC$Family<-sub("^","f__",BAC$Family)
+BAC$Family<-sub("f__NA",NA,BAC$Family)
+BAC$Genus<-sub("^","g__",BAC$Genus)
+BAC$Genus<-sub("g__NA",NA,BAC$Genus)
+BAC$Species<-sub("^","s__",BAC$Species)
+BAC$Species<-sub("s__NA",NA,BAC$Species)
+
+###converts Participant.ID, composting, and relevant biopesticides to factors
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+
+#########Generates well formated object for taxonomy, OTU abundance, and sample data
+###converts otu tables and tax tables to matrices
+FUN_OTU<- FUN[,8:length(colnames(FUN))]
+FUN_TAX <- FUN[,1:7]
+BAC_OTU<- BAC[,8:length(colnames(BAC))]
+BAC_TAX <- BAC[,1:7]
+
+#Removes OTUs with only 1 read in the whole dataset
+BAC_OTU <- BAC_OTU[rowSums(BAC_OTU)>1,]
+FUN_OTU <- FUN_OTU[rowSums(FUN_OTU)>1,]
+
+#removes samples with less than 3000 reads
+BAC_OTU <- BAC_OTU[,colSums(BAC_OTU)>1000]
+FUN_OTU <- FUN_OTU[,colSums(FUN_OTU)>1000]
+
+colSums(BAC_OTU)
+
+###converts relevant column to rownames to each object
+rownames(SAMPLE_DATA)<- SAMPLE_DATA$SEQUENCED_INV_NUMBER
+
+#####Generates ordinations for each dataset
+
+#BAC_FIELD
+#################################################################
+SAMPLE_DATA_FIELD <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="FIELD",]
+#limits otu table to only samples used in compost study
+OTU <- BAC_OTU[,colnames(BAC_OTU) %in% rownames(SAMPLE_DATA_FIELD)]
+
+
+#Removes OTUs absent from all relevant samples
+OTU <- OTU[rowSums(OTU)>1,]
+OTU <- as.matrix(OTU)
+TAX = BAC_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_FIELD[colnames(OTU),]
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+# Extract count matrix and metadata
+count_mat <- assay(em_tse, "counts")
+coldata <- as.data.frame(colData(em_tse))
+
+# Create DESeq2 object with minimal formula (adjust as needed)
+dds_em <- DESeqDataSetFromMatrix(countData = count_mat,
+                                 colData = coldata,
+                                 design = ~ 1)
+
+#dds_em <- estimateSizeFactors(dds_em, type = "poscounts")
+
+# Variance stabilizing transformation
+dso_stab_em <- varianceStabilizingTransformation(dds_em, blind = TRUE, fitType = "parametric")
+vst_mat_em <- assay(dso_stab_em)
+```
+
+
+## Bacteria 
+```{r}
+#####
+#If field data is needed, see "MIcrobiomeOrdination_v4_EM.R"
+#BAC_LAB
+#################################################################
+SAMPLE_DATA_LAB <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[!is.na(SAMPLE_DATA_LAB$Collection_Date),]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[SAMPLE_DATA_LAB$Collection_Date!="45777",]
+
+
+#limits otu table to only samples used in compost study
+OTU <- BAC_OTU[,colnames(BAC_OTU) %in% rownames(SAMPLE_DATA_LAB)]
+#Removes OTUs absent from all relevant samples
+OTU <- OTU[rowSums(OTU)> 1,]
+#OTU <- OTU+1
+
+rowSums(OTU)
+
+OTU <- as.matrix(OTU)
+TAX = BAC_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_LAB[colnames(OTU),]
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+# Extract count matrix and metadata
+count_mat <- assay(em_tse, "counts")
+coldata <- as.data.frame(colData(em_tse))
+
+# Create DESeq2 object with minimal formula (adjust as needed)
+dds_em <- DESeqDataSetFromMatrix(countData = count_mat,
+                                 colData = coldata,
+                                 design = ~ 1)
+#dds_em <- estimateSizeFactors(dds_em, type = "poscounts")
+
+# Variance stabilizing transformation
+dso_stab_em <- varianceStabilizingTransformation(dds_em, blind = TRUE, fitType = "parametric")
+vst_mat_em <- assay(dso_stab_em)
+
+#Collecting scores
+pca_res_em <- prcomp(t(vst_mat_em), center = TRUE, scale. = FALSE)
+pca_scores <- pca_res_em$x[, 1:2]  # PC1 and PC2 per sample
+pca_scores <- as.data.frame(pca_scores)
+pca_scores$SEQUENCED_INV_NUMBER <- row.names(pca_scores)
+blf.clus.align <- as.data.frame(cbind(colData(em_tse)$SEQUENCED_INV_NUMBER,as.character(colData(em_tse)$Source),as.character(colData(em_tse)$Collection_Date),as.character(colData(em_tse)$Slurry),as.character(colData(em_tse)$Compost)))
+colnames(blf.clus.align) <- c("SEQUENCED_INV_NUMBER","sample","collection_date","Slurry","Compost")
+pca_scores_blf <- merge(pca_scores,blf.clus.align,by="SEQUENCED_INV_NUMBER")
+pca_scores_blf$combined = paste(pca_scores_blf$Slurry,pca_scores_blf$Compost)
+pca_scores_blf$combined = factor(pca_scores_blf$combined, levels=c('CROSS NONE','CROSS COMP','REM NONE','REM COMP','HOAG NONE'))
+colors <- c("#EC7063","#B03A2E","#5DADE2","#21618C")
+
+# Adonis - Mary code
+P.bac.fig3 <- convertToPhyloseq(em_tse,assay.type = "counts")
+P.bac.fig3.rel = transform_sample_counts(P.bac.fig3, function(x) x / sum(x))
+d <- data.frame(sample_data(P.bac.fig3.rel))
+data <- data.frame(t(otu_table(P.bac.fig3.rel)))
+data <- decostand(data, method='hellinger')
+
+dist <- vegdist(data, method='bray')
+
+adonis2(dist ~  Slurry*Compost, data=d, perm=999, by = "terms")
+pairwise.adonis(dist,factors=d$Compost, p.adjust.m = "fdr")
+pairwise.adonis(dist,factors=interaction(d$Compost,d$Slurry), p.adjust.m = "fdr")
+
+#plot
+BAC_LAB_PLOT <- ggplot(data = pca_scores_blf, aes(x=PC1,y=PC2)) +
+  geom_point(aes(color = combined), size = 5) +
+  stat_ellipse(aes(group= combined, color= combined), type='t', level=0.95) +
+  scale_color_discrete(palette = colors) +
+  theme(legend.position = "none");BAC_LAB_PLOT
+```
+
+
+## Bac pcoa
+```{r}
+data <- data.frame(t(otu_table(P.bac.fig3.rel)))
+data <- decostand(data, method='hellinger')
+dist <- vegdist(data, method='bray')
+# Perform PCoA using cmdscale
+pcoa_results <- cmdscale(dist, k = 2, eig = TRUE, add = TRUE) # `add=TRUE` handles negative eigenvalues
+# Extract the PCoA positions (coordinates for the plot)
+pcoa_positions <- as_tibble(pcoa_results$points)
+colnames(pcoa_positions) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points <- scores(pcoa_results)
+points<- as.data.frame(points)
+colnames(points) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points$SEQUENCED_INV_NUMBER <- rownames(points)
+
+
+# Calculate the percentage of variation explained by each axis
+eigenvalues <- pcoa_results$eig
+percent_explained_PC1 <- round(100 * eigenvalues[1] / sum(eigenvalues), 1)
+percent_explained_PC2 <- round(100 * eigenvalues[2] / sum(eigenvalues), 1)
+# Combine the PCoA coordinates with sample metadata
+# Ensure row names match between metadata and the original data
+d <- data.frame(sample_data(P.bac.fig3.rel))
+pcoa_data <- dplyr::inner_join(points,d, by = "SEQUENCED_INV_NUMBER")
+pcoa_data$Year <- as.factor(pcoa_data$Year)
+
+beta_fun <- ggplot(data = pcoa_data, aes(x=PCoA1,y=PCoA2)) +
+  geom_point(aes(color = Farm, shape = Year, size = 5)) +
+  scale_color_manual(values = c("#EC7063","#82E0AA","#5DADE2","#F7DC6F"))+
+  labs(x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = "")) +
+  guides(size = "none", color = guide_legend(title = "Farm ID", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12)),position = "bottom"),
+         shape = guide_legend(title = "Year", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12)),position = "bottom",ncol=1))+
+  theme(legend.position = "none");beta_fun
+
+colors <- c("#EC7063","#B03A2E","#5DADE2","#21618C")
+
+pcoa_data <- pcoa_data %>%
+mutate(Compost = as_factor(Compost)) %>%
+mutate(Compost = fct_relevel(Compost, "NONE", "COMP"))
+
+BAC_LAB_PLOT <- ggplot(data = pcoa_data, aes(x=PCoA1,y=PCoA2)) +
+  geom_point(aes(color = interaction(Compost, Slurry)), size = 5) +
+  labs(x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = "")) +
+  stat_ellipse(aes(group= interaction(Compost, Slurry), color= interaction(Compost, Slurry)), type='t', level=0.95) +
+  scale_color_discrete(palette = colors) +
+  theme(legend.position = "none");BAC_LAB_PLOT
+```
+
+
+```{r}
+# Beta dispersion
+mod <- betadisper(dist, interaction(d$Slurry, d$Compost), type = c("centroid"),bias.adjust = F)
+mod
+par(mfrow=c(2,2))
+plot(mod)
+anova(mod)
+plot(mod, ellipse = TRUE, hull = FALSE, conf = 0.90) # 90% data ellipse
+(mod.HSD <- TukeyHSD(mod))
+plot(mod.HSD)
+boxplot(mod,
+        xlab="Week")
+print(mod, digits = max(3, getOption("digits") - 3),
+                           neigen = 8)
+
+df <- as.data.frame(mod$distances)
+df$SEQUENCED_INV_NUMBER <- rownames(df)
+names(df)[names(df) == "mod$distances"] <- "distance"
+
+
+
+d.bd <- dplyr::inner_join(df, d, by = "SEQUENCED_INV_NUMBER")
+
+
+mod <- lm(distance ~ Slurry*Compost, data = d.bd) 
+plot(mod)
+Anova(mod, type = 3)
+emmip(mod, Compost ~ Slurry, CIs = TRUE)
+res <- emmeans(mod, list(pairwise ~ Compost*Slurry), adjust = "fdr")
+plot(res[[1]], horizontal=F)
+df <- as.data.frame(emmeans(mod, ~ Compost*Slurry))
+
+res <- emmeans(mod, list(pairwise ~ Compost*Slurry), adjust = "fdr")
+groups <- data.frame(multcomp::cld(res[[1]], adjust='fdr', Letters=c("abcdefghijklmnopqrstuvwxy"), decreasing=T)) %>% 
+  dplyr::select(., Compost, Slurry, .group)
+df <- dplyr::inner_join(df,groups, by = c('Compost', 'Slurry'))
+
+names(df)[names(df) == '.group'] <- 'letters'
+df$letters <- gsub(' ','',df$letters)
+
+
+d.bd <- d.bd %>%
+mutate(Compost = as_factor(Compost)) %>%
+mutate(Compost = fct_relevel(Compost, "NONE", "COMP"))
+
+df <- df %>%
+mutate(Compost = as_factor(Compost)) %>%
+mutate(Compost = fct_relevel(Compost, "NONE", "COMP"))
+
+p <- ggplot() +
+  geom_boxplot(data=d.bd, aes(x=Slurry, y=distance, fill = interaction(Compost, Slurry))) +
+  labs(y="Distance to the Centroid")+
+  theme_classic()+
+  scale_color_manual(values = c("black", "black"),guide = "none")+
+  scale_fill_manual(values = c("#EC7063","#B03A2E","#5DADE2","#21618C"),
+                    labels=c('Crossroads No Compost', 'Crossroads With Compost', 'Remembrance No Compost', 'Remembrance With Compost')) +
+  geom_text(data=df,stat='identity',
+            aes(x=Slurry, y=emmean+SE+0.01, label=letters, color = Compost), 
+            size=4,position=position_dodge(.9))+
+  scale_x_discrete(labels = c("CROSS" = "Crossroads", "REM" = "Remembrance"))+
+  theme(axis.text.x=element_text(colour = "black"),
+        axis.text.y=element_text(colour = "black"),
+        axis.title.x=element_blank(),
+        legend.title = element_blank(),
+        axis.line = element_line(colour = "black"));p
+```
+
+## Fungi
+```{r}
+#####
+#FUN_LAB
+#################################################################
+SAMPLE_DATA_LAB <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[!is.na(SAMPLE_DATA_LAB$Collection_Date),]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[SAMPLE_DATA_LAB$Collection_Date!="45777",]
+
+
+#limits otu table to only samples used in compost study
+OTU <- FUN_OTU[,colnames(FUN_OTU) %in% rownames(SAMPLE_DATA_LAB)]
+#Removes OTUs absent from all relevant samples
+OTU <- OTU[rowSums(OTU)> 1,]
+#OTU <- OTU+1
+
+OTU <- as.matrix(OTU)
+TAX = FUN_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_LAB[colnames(OTU),]
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+# Extract count matrix and metadata
+count_mat <- assay(em_tse, "counts")
+coldata <- as.data.frame(colData(em_tse))
+
+# Create DESeq2 object with minimal formula (adjust as needed)
+dds_em <- DESeqDataSetFromMatrix(countData = count_mat,
+                                 colData = coldata,
+                                 design = ~ 1)
+dds_em <- estimateSizeFactors(dds_em, type = "poscounts")
+
+# Variance stabilizing transformation
+dso_stab_em <- varianceStabilizingTransformation(dds_em, blind = TRUE, fitType = "parametric")
+vst_mat_em <- assay(dso_stab_em)
+
+#Collecting scores
+pca_res_em <- prcomp(t(vst_mat_em), center = TRUE, scale. = FALSE)
+pca_scores <- pca_res_em$x[, 1:2]  # PC1 and PC2 per sample
+pca_scores <- as.data.frame(pca_scores)
+pca_scores$SEQUENCED_INV_NUMBER <- row.names(pca_scores)
+blf.clus.align <- as.data.frame(cbind(colData(em_tse)$SEQUENCED_INV_NUMBER,as.character(colData(em_tse)$Source),as.character(colData(em_tse)$Collection_Date),as.character(colData(em_tse)$Slurry),as.character(colData(em_tse)$Compost)))
+colnames(blf.clus.align) <- c("SEQUENCED_INV_NUMBER","sample","collection_date","Slurry","Compost")
+pca_scores_blf <- merge(pca_scores,blf.clus.align,by="SEQUENCED_INV_NUMBER")
+pca_scores_blf$combined = paste(pca_scores_blf$Slurry,pca_scores_blf$Compost)
+pca_scores_blf$combined = factor(pca_scores_blf$combined, levels=c('CROSS NONE','CROSS COMP','REM NONE','REM COMP'))
+colors <- c("#EC7063","#B03A2E","#5DADE2","#21618C")
+
+# Adonis - mary code
+P.fun.fig3 <- convertToPhyloseq(em_tse,assay.type = "counts")
+P.fun.fig3.rel = transform_sample_counts(P.fun.fig3, function(x) x / sum(x))
+d <- data.frame(sample_data(P.bac.fig3.rel))
+data <- data.frame(t(otu_table(P.bac.fig3.rel)))
+data <- decostand(data, method='hellinger')
+
+dist <- vegdist(data, method='bray')
+adonis2(dist ~  Slurry*Compost, data=d, perm=999, by = "terms")
+pairwise.adonis(dist,factors=d$Compost, p.adjust.m = "fdr")
+pairwise.adonis(dist,factors=interaction(d$Compost,d$Slurry), p.adjust.m = "fdr")
+
+#plot
+FUN_LAB_PLOT <- ggplot(data = pca_scores_blf, aes(x=PC1,y=PC2)) +
+  geom_point(aes(color = combined, size = 5)) +
+  scale_color_discrete(palette = colors, labels=c('Farm 1 No Compost', 'Farm 1 With Compost','Farm 2 No Compost', 'Farm 2 With Compost')) +
+    stat_ellipse(aes(group= combined, color= combined), type='t', level=0.95) +
+  guides(size = "none", color = guide_legend(title = "Treatment", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12)))) +
+  theme(legend.position = "none");FUN_LAB_PLOT
+```
+
+## Fungi pcoa
+## Bac pcoa
+```{r}
+data <- data.frame(t(otu_table(P.fun.fig3.rel)))
+data <- decostand(data, method='hellinger')
+dist <- vegdist(data, method='bray')
+# Perform PCoA using cmdscale
+pcoa_results <- cmdscale(dist, k = 2, eig = TRUE, add = TRUE) # `add=TRUE` handles negative eigenvalues
+# Extract the PCoA positions (coordinates for the plot)
+pcoa_positions <- as_tibble(pcoa_results$points)
+colnames(pcoa_positions) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points <- scores(pcoa_results)
+points<- as.data.frame(points)
+colnames(points) <- c("PCoA1", "PCoA2") # Rename columns for clarity
+points$SEQUENCED_INV_NUMBER <- rownames(points)
+
+
+# Calculate the percentage of variation explained by each axis
+eigenvalues <- pcoa_results$eig
+percent_explained_PC1 <- round(100 * eigenvalues[1] / sum(eigenvalues), 1)
+percent_explained_PC2 <- round(100 * eigenvalues[2] / sum(eigenvalues), 1)
+# Combine the PCoA coordinates with sample metadata
+# Ensure row names match between metadata and the original data
+d <- data.frame(sample_data(P.fun.fig3.rel))
+pcoa_data <- dplyr::inner_join(points,d, by = "SEQUENCED_INV_NUMBER")
+
+colors <- c("#EC7063","#B03A2E","#5DADE2","#21618C")
+
+pcoa_data <- pcoa_data %>%
+mutate(Compost = as_factor(Compost)) %>%
+mutate(Compost = fct_relevel(Compost, "NONE", "COMP"))
+
+FUN_LAB_PLOT <- ggplot(data = pcoa_data, aes(x=PCoA1,y=PCoA2)) +
+  geom_point(aes(color = interaction(Compost, Slurry)), size = 5) +
+  labs(x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = "")) +
+  stat_ellipse(aes(group= interaction(Compost, Slurry), color= interaction(Compost, Slurry)), type='t', level=0.95) +
+  scale_color_discrete(palette = colors) +
+  theme(legend.position = "none");FUN_LAB_PLOT
+```
+
+## Control plots
+```{r}
+#####
+#BAC_CNTRL
+#################################################################
+SAMPLE_DATA_CNTRL <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_CNTRL <- SAMPLE_DATA_CNTRL[!is.na(SAMPLE_DATA_CNTRL$Collection_Date),]
+SAMPLE_DATA_CNTRL <- SAMPLE_DATA_CNTRL[SAMPLE_DATA_CNTRL$Collection_Date=="45777",]
+
+
+#limits otu table to only samples used in compost study
+OTU <- BAC_OTU[,colnames(BAC_OTU) %in% rownames(SAMPLE_DATA_CNTRL)]
+#Removes OTUs absent from all relevant samples
+OTU <- OTU[rowSums(OTU)> 1,]
+#OTU <- OTU+1
+
+OTU <- as.matrix(OTU)
+TAX = BAC_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_CNTRL[colnames(OTU),]
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+# Extract count matrix and metadata
+count_mat <- assay(em_tse, "counts")
+coldata <- as.data.frame(colData(em_tse))
+
+# Create DESeq2 object with minimal formula (adjust as needed)
+dds_em <- DESeqDataSetFromMatrix(countData = count_mat,
+                                 colData = coldata,
+                                 design = ~ 1)
+#dds_em <- estimateSizeFactors(dds_em, type = "poscounts")
+
+# Variance stabilizing transformation
+dso_stab_em <- varianceStabilizingTransformation(dds_em, blind = TRUE, fitType = "parametric")
+vst_mat_em <- assay(dso_stab_em)
+
+#get a matrix of pc values
+pca_res_em <- prcomp(t(vst_mat_em), center = TRUE, scale. = FALSE)
+
+
+pca_scores <- pca_res_em$x[, 1:2]  # PC1 and PC2 per sample
+pca_scores <- as.data.frame(pca_scores)
+pca_scores$SEQUENCED_INV_NUMBER <- row.names(pca_scores)
+blf.clus.align <- as.data.frame(cbind(colData(em_tse)$SEQUENCED_INV_NUMBER,as.character(colData(em_tse)$Source),as.character(colData(em_tse)$Collection_Date),as.character(colData(em_tse)$Slurry),as.character(colData(em_tse)$Compost)))
+colnames(blf.clus.align) <- c("SEQUENCED_INV_NUMBER","sample","collection_date","Slurry","Compost")
+pca_scores_blf <- merge(pca_scores,blf.clus.align,by="SEQUENCED_INV_NUMBER")
+pca_scores_blf$combined <- paste(pca_scores_blf$Slurry,pca_scores_blf$Compost)
+pca_scores_blf$combined = factor(pca_scores_blf$combined, levels=c('HOAG NONE','HOAG COMP'))
+colors <- c("#aaaaaa","#000000")
+
+#plot
+BAC_CNTRL_PLOT <- ggplot(data = pca_scores_blf, aes(x=PC1,y=PC2)) +
+  geom_point(aes(color = combined, size = 5)) +
+  scale_color_discrete(palette = colors, labels=c('No Compost Control', 'Compost Control')) +
+  theme(legend.position = "none")
+BAC_CNTRL_PLOT
+#####
+#FUN_CNTRL
+#################################################################
+
+SAMPLE_DATA_CNTRL <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_CNTRL <- SAMPLE_DATA_CNTRL[!is.na(SAMPLE_DATA_CNTRL$Collection_Date),]
+SAMPLE_DATA_CNTRL <- SAMPLE_DATA_CNTRL[SAMPLE_DATA_CNTRL$Collection_Date=="45777",]
+
+
+#limits otu table to only samples used in compost study
+OTU <- FUN_OTU[,colnames(FUN_OTU) %in% rownames(SAMPLE_DATA_CNTRL)]
+#Removes OTUs absent from all relevant samples
+OTU <- OTU[rowSums(OTU)> 1,]
+#OTU <- OTU+1
+
+OTU <- as.matrix(OTU)
+TAX = FUN_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_CNTRL[colnames(OTU),]
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+# Extract count matrix and metadata
+count_mat <- assay(em_tse, "counts")
+coldata <- as.data.frame(colData(em_tse))
+
+# Create DESeq2 object with minimal formula (adjust as needed)
+dds_em <- DESeqDataSetFromMatrix(countData = count_mat,
+                                 colData = coldata,
+                                 design = ~ 1)
+dds_em <- estimateSizeFactors(dds_em, type = "poscounts")
+
+# Variance stabilizing transformation
+dso_stab_em <- varianceStabilizingTransformation(dds_em, blind = TRUE, fitType = "parametric")
+vst_mat_em <- assay(dso_stab_em)
+
+#get a matrix of pc values
+pca_res_em <- prcomp(t(vst_mat_em), center = TRUE, scale. = FALSE)
+
+
+pca_scores <- pca_res_em$x[, 1:2]  # PC1 and PC2 per sample
+pca_scores <- as.data.frame(pca_scores)
+pca_scores$SEQUENCED_INV_NUMBER <- row.names(pca_scores)
+blf.clus.align <- as.data.frame(cbind(colData(em_tse)$SEQUENCED_INV_NUMBER,as.character(colData(em_tse)$Source),as.character(colData(em_tse)$Collection_Date),as.character(colData(em_tse)$Slurry),as.character(colData(em_tse)$Compost)))
+colnames(blf.clus.align) <- c("SEQUENCED_INV_NUMBER","sample","collection_date","Slurry","Compost")
+pca_scores_blf <- merge(pca_scores,blf.clus.align,by="SEQUENCED_INV_NUMBER")
+pca_scores_blf$combined <- paste(pca_scores_blf$Slurry,pca_scores_blf$Compost)
+pca_scores_blf$combined = factor(pca_scores_blf$combined, levels=c('HOAG NONE','HOAG COMP'))
+colors <- c("#aaaaaa","#000000")
+
+#plot
+FUN_CNTRL_PLOT <- ggplot(data = pca_scores_blf, aes(x=PC1,y=PC2)) +
+  geom_point(aes(color = combined, size = 5)) +
+  scale_color_discrete(palette = colors, labels=c('No Compost Control', 'Compost Control')) +
+  guides(size = "none", color = guide_legend(title = "Treatment", theme = theme(legend.title = element_text(size = 12), legend.text = element_text(size = 12))))
+FUN_CNTRL_PLOT
+```
+
+## Compile
+```{r}
+#####
+#Generating ordination plots
+#################################################################
+FIELD_PLOT_1 <- plot_grid(BAC_FIELD_PLOT_1, FUN_FIELD_PLOT_1, labels = c('B', 'C'), nrow = 1, ncol = 2, rel_widths = c(1, 1));FIELD_PLOT_1
+FIELD_PLOT_2 <- plot_grid(BAC_FIELD_PLOT_2, FUN_FIELD_PLOT_2, labels = c('B', 'C'), nrow = 1, ncol = 2, rel_widths = c(1, 1));FIELD_PLOT_2
+
+FIELD_PLOT <- plot_grid(BAC_FIELD_PLOT, FUN_FIELD_PLOT, labels = c('B', 'C'), nrow = 1, ncol = 2, rel_widths = c(1, 1.5))
+FIELD_PLOT
+#setwd("C:/Users/AG-PLP-cclabuser/Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data")
+setwd("/Users/clare/Library/CloudStorage/Box-Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data")
+ggsave(filename = "Data/output/Field_sample_ordination.svg", plot = FIELD_PLOT_1,
+       width = 11, height = 4, device = "svg")
+
+LAB_PLOT <- plot_grid(BAC_LAB_PLOT, FUN_LAB_PLOT, labels = c('C', 'D'), rel_widths = c(1, 1));LAB_PLOT
+ggsave(filename = "Data/output/Lab_sample_ordination_ellipse_pcoa.svg", plot = LAB_PLOT,
+       width = 11, height = 5, device = "svg")
+
+
+CNTRL_PLOT <- plot_grid(BAC_CNTRL_PLOT, FUN_CNTRL_PLOT, labels = c('A', 'B'), rel_widths = c(1, 1.5))
+CNTRL_PLOT
+#setwd("C:/Users/AG-PLP-cclabuser/Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data")
+
+```
+
+
+
+# Alpha diversity
+
+## Read in data 
+```{r}
+bac_alpha <- read.csv("Data/Bacterial_alpha_div_data.csv")
+fun_alpha <- read.csv("Data/Fungal_alpha_div_data.csv")
+```
+
+```{r}
+######Generates plots
+
+##Bacteria
+
+
+m1 <- glmmTMB(shannon.Estimator ~ Slurry*Compost, data = bac_alpha, family = gaussian)
+summary(m1)
+BAC_ALPHA_STAT <- emmeans(m1, pairwise ~ Compost|Slurry)
+BAC_ALPHA_SUMMARY <- summary(BAC_ALPHA_STAT$emmeans)
+BAC_ALPHA_CONTRASTS <- summary(BAC_ALPHA_STAT$contrasts)
+
+mod <- lm(shannon.Estimator~Slurry*Compost, data=bac_alpha)
+par(mfrow=c(2,2))
+plot(mod)
+Anova(mod, Type = 3)
+emmip(mod, Compost ~ Slurry, CIs = TRUE)
+res <- emmeans(mod, list(pairwise ~ Compost*Slurry), adjust = "fdr")
+plot(res[[1]], horizontal=F)
+
+t <- HSD.test(mod, "Slurry");t
+t <- HSD.test(mod, "Compost");t
+
+bac_alpha$letters <- ifelse(bac_alpha$Slurry == "REM" & bac_alpha$Compost == "NONE", "b",  
+                            ifelse(bac_alpha$Slurry == "REM" & bac_alpha$Compost == "COMP", "a",
+                                   ifelse(bac_alpha$Slurry == "CROSS" & bac_alpha$Compost == "NONE", "b",
+                                          ifelse(bac_alpha$Slurry == "CROSS" & bac_alpha$Compost == "COMP", "a",NA))))
+
+bac_alpha$combined <- paste(bac_alpha$Slurry,bac_alpha$Compost)
+bac_alpha$combined = factor(bac_alpha$combined, levels=c("CROSS NONE", "CROSS COMP", "REM NONE", "REM COMP"))
+fill_colors = c("#EC7063","#B03A2E","#5DADE2","#21618C")
+
+bac_alpha_fig <- ggplot(bac_alpha, aes(combined, shannon.Estimator, fill = combined)) +
+  geom_bar(stat = "summary", position = "dodge") +
+  geom_errorbar(stat = "summary", position = "dodge", width=0.4, alpha=0.9, linewidth=1.3) +
+  geom_jitter(width = 0.1, height = 0) +
+  geom_text(stat = "summary", aes(label = letters),position=position_dodge(0.9), vjust = -2, hjust = -0.2, size = 5)+
+  scale_fill_manual(values=fill_colors) +
+  scale_x_discrete(labels=c('Farm 1\nNo Compost','Farm 1\nCompost','Farm 2\nNo Compost','Farm 2\nCompost'))+
+  xlab(label = "") +
+  ylab(label = "Asymptotic Shannon Diversity Estimate") +
+  theme(panel.grid.minor.y = element_blank(),
+        axis.text.x = element_text(size = 12, color = "black"),
+        legend.position = "none", strip.text = element_text(size = 12, color = "black"), 
+        axis.title = element_text(size = 12, color = "black"),
+        axis.text = element_text(size = 12, color = "black"));bac_alpha_fig
+
+##Fungi
+
+mod <- lm(shannon.Estimator~Slurry*Compost, data=fun_alpha)
+par(mfrow=c(2,2))
+plot(mod)
+Anova(mod, Type = 3)
+emmip(mod, Compost ~ Slurry, CIs = TRUE)
+res <- emmeans(mod, list(pairwise ~ Compost*Slurry), adjust = "fdr")
+plot(res[[1]], horizontal=F)
+
+t <- HSD.test(mod, "Slurry");t
+t <- HSD.test(mod, "Compost");t
+
+fun_alpha$letters <- ifelse(fun_alpha$Slurry == "REM" & fun_alpha$Compost == "NONE", "b",  
+                            ifelse(fun_alpha$Slurry == "REM" & fun_alpha$Compost == "COMP", "a",
+                                   ifelse(fun_alpha$Slurry == "CROSS" & fun_alpha$Compost == "NONE", "b",
+                                          ifelse(fun_alpha$Slurry == "CROSS" & fun_alpha$Compost == "COMP", "a",NA))))
+
+fun_alpha$combined <- paste(fun_alpha$Slurry,fun_alpha$Compost)
+fun_alpha$combined = factor(fun_alpha$combined, levels=c("CROSS NONE", "CROSS COMP", "REM NONE", "REM COMP"))
+fill_colors = c("#EC7063","#B03A2E","#5DADE2","#21618C")
+
+fun_alpha_fig <- ggplot(fun_alpha, aes(combined, shannon.Estimator, fill = combined)) +
+  geom_bar(stat = "summary", position = "dodge") +
+  geom_errorbar(stat = "summary", position = "dodge", width=0.4, alpha=0.9, linewidth=1.3) +
+  geom_jitter(width = 0.1, height = 0) +
+    geom_text(stat = "summary", aes(label = letters),position=position_dodge(0.9), vjust = -3, hjust = -0.2, size = 5)+
+  scale_fill_manual(values=fill_colors) +
+  scale_x_discrete(labels=c('Farm 1\nNo Compost','Farm 1\nCompost','Farm 2\nNo Compost','Farm 2\nCompost'))+
+  xlab(label = "") +
+  ylab(label = "Asymptotic Shannon Diversity Estimate") +
+  theme(panel.grid.minor.y = element_blank(),
+        axis.text.x = element_text(size = 12, color = "black"),
+        legend.position = "none", strip.text = element_text(size = 12, color = "black"), 
+        axis.title = element_text(size = 12, color = "black"),
+        axis.text = element_text(size = 12, color = "black"));fun_alpha_fig
+# 
+# m1 <- glmmTMB(shannon.Estimator ~ Slurry*Compost, data = fun_alpha, family = gaussian)
+# summary(m1)
+# FUN_ALPHA_STAT <- emmeans(m1, pairwise ~ Compost|Slurry)
+# FUN_ALPHA_SUMMARY <- summary(FUN_ALPHA_STAT$emmeans)
+# FUN_ALPHA_CONTRASTS <- summary(FUN_ALPHA_STAT$contrasts)
+# write.csv(FUN_ALPHA_SUMMARY,"/Users/clare/Library/CloudStorage/Box-Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Alpha diversity analysis/FUN_ALPHA_SUMMARY",row.names = FALSE)
+# write.csv(FUN_ALPHA_CONTRASTS,"/Users/clare/Library/CloudStorage/Box-Box/Ethan_M/Projects/Composting Project/Nanopore soil sequencing data/Alpha diversity analysis/FUN_ALPHA_CONTRASTS",row.names = FALSE)
+
+alpha_fig <- plot_grid(bac_alpha_fig,fun_alpha_fig, labels = c("A","B"))
+alpha_fig
+
+ggsave(filename = "Data/output/Alpha_diversity_figure_letters.svg", plot = alpha_fig,
+       width = 10, height = 5, device = "svg")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+
