@@ -31,8 +31,20 @@ Outputs: <br>
 ## Figure_2_stats.Rmd
 
 -   Description: This file corresponds to the code used to generate figure 2. It includes code to generate a map, alpha diversity, and beta diversity.
--   Inputs:
--   Output: Results corresponding to figure 2. Figure 2.
+
+Inputs:
+
+-   seed_farm_locations.csv (MAP)
+-   EJM-CLS-22F_pct98.csv (BETA)
+-   EJM-CLS-22B_pct98.csv (BETA)
+-   sample_data_field_switch_samples_bac.csv (BETA)
+-   sample_data_field_switch_samples_fun.csv (BETA)
+-   HATCH_compost_bioassay_data.xlsx (APHID)
+
+Outputs:
+
+-   Figure_2.svg
+
 
 ## Figure_3_stats.Rmd
 
