@@ -24,9 +24,9 @@ Inputs: <br>
 
 Outputs: <br>
 
--   figure 1
-
--   figure s1
+-   Figure 1
+-   Figure S1
+-   Results corresponding to Figures 1 and S1
 
 ## Figure_2_stats.Rmd
 
