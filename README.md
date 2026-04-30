@@ -14,22 +14,13 @@ This file corresponds to the code used to generate figure 1. It includes code to
 
 Inputs: <br>
 
-Map <br>
-
--   Bloom_SiteLocations.csv
-
-ALPHA <br>
-
--   Formatted data on samples used in analysis.xlsx
-
-BETA <br>
-
--   Formatted data on samples used in analysis.xlsx
--   Bloom_otu_table_Bac.csv
--   Bloom_otu_table_Fun.csv
--   Bloom_taxonomy_table_Bac.csv
--   Bloom_taxonomy_table_Fun.csv
--   Bloom_sample_info.csv
+-   Bloom_SiteLocations.csv (for MAP fig)
+-   Formatted data on samples used in analysis.xlsx (for ALPHA and BETA fig)
+-   Bloom_otu_table_Bac.csv (for BETA fig)
+-   Bloom_otu_table_Fun.csv (for BETA fig)
+-   Bloom_taxonomy_table_Bac.csv (for BETA fig)
+-   Bloom_taxonomy_table_Fun.csv (for BETA fig)
+-   Bloom_sample_info.csv (for BETA fig)
 
 Outputs: <br>
 
