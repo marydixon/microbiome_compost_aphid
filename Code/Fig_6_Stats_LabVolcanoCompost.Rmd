@@ -257,8 +257,8 @@ df_fig_compost_volcano = res_prim %>%
   dplyr::arrange(desc(lfc_CompostCOMP)) %>%
   dplyr::filter(passed_ss_CompostCOMP == 1) %>%
   dplyr::mutate(direct = ifelse(lfc_CompostCOMP > 0, "Positive LFC", "Negative LFC"))
-df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
-df_fig_compost$direct = factor(df_fig_compost$direct,
+df_fig_compost_volcano$taxon = factor(df_fig_compost_volcano$taxon, levels = df_fig_compost_volcano$taxon)
+df_fig_compost_volcano$direct = factor(df_fig_compost_volcano$direct,
                                levels = c("Positive LFC", "Negative LFC"))
 
 
