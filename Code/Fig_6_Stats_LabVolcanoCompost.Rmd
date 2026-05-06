@@ -1,0 +1,581 @@
+---
+title: "Untitled"
+author: "MD"
+date: "`r Sys.Date()`"
+output: 
+ html_document:
+   toc: true
+   toc_float: true
+   editor_options:
+   chunck_output_type: console
+---
+Inputs: <br>
+
+-   EJM-CLS-22F_pct98.csv
+-   EJM-CLS-22B_pct98.csv
+-   Sequencing_data_formatted_for_analysis(01.28.2026).xlsx
+-   Bloom_otu_table_Bac.csv
+-   Bloom_otu_table_Fun.csv
+-   Bloom_taxonomy_table_Bac.csv
+-   Bloom_taxonomy_table_Fun.csv
+-   Bloom_sample_info.csv
+ 
+
+Outputs: <br>
+
+-   figure 6
+
+
+# Load libraries
+```{r, results = 'hide', message=FALSE}
+knitr::opts_chunk$set(out.width = "100%")
+library(readxl)
+library(ANCOMBC)
+library(tidyverse)
+library(reshape2)
+library(phyloseq)
+library(cowplot)
+```
+
+# Lab trial
+
+## Read in data
+```{r, message=F, warning=F}
+FUN <- read.csv("../Data/EJM-CLS-22F_pct98.csv")
+BAC <- read.csv("../Data/EJM-CLS-22B_pct98.csv")
+BAC <- BAC[!is.na(BAC$Kingdom),]
+FUN <- FUN[FUN$Kingdom =="k__Fungi",]
+FUN <- FUN[!is.na(FUN$Kingdom),]
+
+SAMPLE_DATA <- as.data.frame(read_xlsx("../Data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+```
+
+## Create phyloseq
+```{r, message=F, warning=F}
+rownames(FUN) <- FUN$X
+FUN <- FUN[,-1]
+rownames(BAC) <- BAC$X
+BAC <- BAC[,-1]
+
+BAC$Kingdom<-sub("^","k__",BAC$Kingdom)
+BAC$Kingdom<-sub("k__NA",NA,BAC$Kingdom)
+BAC$Phylum<-sub("^","p__",BAC$Phylum)
+BAC$Phylum<-sub("p__NA",NA,BAC$Phylum)
+BAC$Class<-sub("^","c__",BAC$Class)
+BAC$Class<-sub("c__NA",NA,BAC$Class)
+BAC$Order<-sub("^","o__",BAC$Order)
+BAC$Order<-sub("o__NA",NA,BAC$Order)
+BAC$Family<-sub("^","f__",BAC$Family)
+BAC$Family<-sub("f__NA",NA,BAC$Family)
+BAC$Genus<-sub("^","g__",BAC$Genus)
+BAC$Genus<-sub("g__NA",NA,BAC$Genus)
+BAC$Species<-sub("^","s__",BAC$Species)
+BAC$Species<-sub("s__NA",NA,BAC$Species)
+
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+
+
+FUN_OTU<- FUN[,8:length(colnames(FUN))]
+FUN_TAX <- FUN[,1:7]
+BAC_OTU<- BAC[,8:length(colnames(BAC))]
+BAC_TAX <- BAC[,1:7]
+
+BAC_TAX <- as.data.frame(BAC_TAX)
+FUN_TAX <- as.data.frame(FUN_TAX)
+
+BAC_TAX$Species[grep('incertae', BAC_TAX$Species, ignore.case = TRUE)] <- NA
+BAC_TAX$Species[grep('unknown', BAC_TAX$Species, ignore.case = TRUE)] <- NA
+BAC_TAX$Genus[grep('incertae', BAC_TAX$Genus, ignore.case = TRUE)] <- NA
+BAC_TAX$Genus[grep('unknown', BAC_TAX$Genus, ignore.case = TRUE)] <- NA
+BAC_TAX$Family[grep('incertae', BAC_TAX$Family, ignore.case = TRUE)] <- NA
+BAC_TAX$Family[grep('unknown', BAC_TAX$Family, ignore.case = TRUE)] <- NA
+FUN_TAX$Species[grep('incertae', FUN_TAX$Species, ignore.case = TRUE)] <- NA
+FUN_TAX$Species[grep('unknown', FUN_TAX$Species, ignore.case = TRUE)] <- NA
+FUN_TAX$Genus[grep('incertae', FUN_TAX$Genus, ignore.case = TRUE)] <- NA
+FUN_TAX$Genus[grep('unknown', FUN_TAX$Genus, ignore.case = TRUE)] <- NA
+FUN_TAX$Family[grep('incertae', FUN_TAX$Family, ignore.case = TRUE)] <- NA
+FUN_TAX$Family[grep('unknown', FUN_TAX$Family, ignore.case = TRUE)] <- NA
+
+BAC_TAX$Species <- if_else(is.na(BAC_TAX$Species),NA,paste(BAC_TAX$Genus,"_",BAC_TAX$Species,sep = ""))
+FUN_TAX$Species <- if_else(is.na(FUN_TAX$Species),NA,paste("s__",substr(FUN_TAX$Genus, 4, nchar(FUN_TAX$Genus)),"_",substr(FUN_TAX$Species, 4, nchar(FUN_TAX$Species)),sep = ""))
+
+bac_combined_tax <- if_else(BAC_TAX$Species == "_","test_true",BAC_TAX$Species, missing = BAC_TAX$Genus)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Family)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Order)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Class)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Phylum)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = BAC_TAX$Kingdom)
+bac_combined_tax <- melt(data.frame(rownames(BAC_TAX),bac_combined_tax))
+colnames(bac_combined_tax) <- c("OTU", "taxon")
+
+fun_combined_tax <- if_else(FUN_TAX$Species == "_","test_true",FUN_TAX$Species, missing = FUN_TAX$Genus)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Family)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Order)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Class)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Phylum)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = FUN_TAX$Kingdom)
+fun_combined_tax <- melt(data.frame(rownames(FUN_TAX),fun_combined_tax))
+colnames(fun_combined_tax) <- c("OTU", "taxon")
+
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+SAMPLE_DATA$Compost <- factor(SAMPLE_DATA$Compost, levels = c("NONE","COMP"))
+
+SAMPLE_DATA_LAB <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[!is.na(SAMPLE_DATA_LAB$Collection_Date),]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[SAMPLE_DATA_LAB$Collection_Date!="45777",]
+rownames(SAMPLE_DATA_LAB) <- SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER
+
+FUN_OTU <- FUN_OTU[,colnames(FUN_OTU)%in%SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER]
+BAC_OTU <- BAC_OTU[,colnames(BAC_OTU)%in%SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER]
+
+BAC_OTU <- BAC_OTU[rowSums(BAC_OTU)>1,]
+FUN_OTU <- FUN_OTU[rowSums(FUN_OTU)>1,]
+
+
+FUN_OTU<- as.matrix(FUN_OTU)
+FUN_TAX <- as.matrix(FUN_TAX)
+BAC_OTU<- as.matrix(BAC_OTU)
+BAC_TAX <- as.matrix(BAC_TAX)
+
+OTU = otu_table(FUN_OTU, taxa_are_rows = TRUE)
+TAX = tax_table(FUN_TAX)
+samples = sample_data(SAMPLE_DATA_LAB)
+sample_names(SAMPLE_DATA_LAB) <- SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER
+FUN_phyloseq <- phyloseq(OTU, TAX, samples)
+
+OTU = otu_table(BAC_OTU, taxa_are_rows = TRUE)
+TAX = tax_table(BAC_TAX)
+samples = sample_data(SAMPLE_DATA_LAB)
+sample_names(SAMPLE_DATA_LAB) <- SAMPLE_DATA_LAB$SEQUENCED_INV_NUMBER
+BAC_phyloseq <- phyloseq(OTU, TAX, samples)
+
+
+lab_bac_compost_tse = mia::convertFromPhyloseq(BAC_phyloseq)
+lab_fun_compost_tse = mia::convertFromPhyloseq(FUN_phyloseq)
+```
+
+## Runs ancombc
+```{r, message=F, warning=F}
+set.seed(123)
+Sys.time()
+compost_ancom_bac_SPE = ancombc2(data = lab_bac_compost_tse, assay_name = "counts",tax_level = "Species",
+                                 fix_formula = "Compost*Slurry",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+#for fungi
+set.seed(123)
+Sys.time()
+compost_ancom_fun_SPE = ancombc2(data = lab_fun_compost_tse, assay_name = "counts",tax_level = "Species",
+                                 fix_formula = "Compost*Slurry",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+```
+
+### Save files 
+```{r, message=F, warning=F}
+saveRDS(compost_ancom_bac_SPE, file = '../Data/output/Long_read_compost_ancom_bac_SPE.rds', ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(compost_ancom_fun_SPE, file = '../Data/output/Long_read_compost_ancom_fun_SPE.rds', ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+
+
+compost_ancom_bac_SPE <- readRDS(file = '../Data/output/Long_read_compost_ancom_bac_SPE.rds', refhook = NULL)
+compost_ancom_fun_SPE <- readRDS(file = '../Data/output/Long_read_compost_ancom_fun_SPE.rds', refhook = NULL)
+```
+
+## Generates figure for bacteria
+
+### Prep df for figure
+```{r, message=F, warning=F}
+res_prim = compost_ancom_bac_SPE$res
+
+df_fig_compost_volcano = res_prim %>%
+  dplyr::filter(p_CompostCOMP <1) %>%
+  dplyr::arrange(desc(lfc_CompostCOMP)) %>%
+  dplyr::filter(passed_ss_CompostCOMP == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_CompostCOMP > 0, "Positive LFC", "Negative LFC"))
+df_fig_compost_volcano$taxon = factor(df_fig_compost_volcano$taxon, levels = df_fig_compost_volcano$taxon)
+df_fig_compost_volcano$direct = factor(df_fig_compost_volcano$direct,
+                               levels = c("Positive LFC", "Negative LFC"))
+
+
+df_fig_compost_volcano$sig <- ifelse(df_fig_compost_volcano$p_CompostCOMP>0.01, "NS",
+                                       ifelse(df_fig_compost_volcano$p_CompostCOMP==0.01, "NS",
+                                              ifelse(df_fig_compost_volcano$p_CompostCOMP<0.01, "sig",NA)))
+df_fig_compost_volcano$sig.stage <- paste(df_fig_compost_volcano$direct,df_fig_compost_volcano$sig)
+
+
+df_fig_compost_volcano$colors <- ifelse(df_fig_compost_volcano$sig=="NS", "NS",
+                        ifelse(df_fig_compost_volcano$sig.stage=='Positive LFC sig',"Compost",
+                               ifelse(df_fig_compost_volcano$sig.stage=='Negative LFC sig','No Compost',NA)))
+df_fig_compost_volcano<- arrange(df_fig_compost_volcano, -log(p_CompostCOMP))
+```
+
+### Makes figure
+```{r}
+p.bac.lab<-ggplot(data=df_fig_compost_volcano)+
+  geom_point(alpha=0.85,mapping= aes(
+    fill=colors, x=lfc_CompostCOMP,y=-log(p_CompostCOMP)),
+    size=5,color='black',pch=21) +
+  scale_fill_manual(values = c('chocolate4','cyan4','gray50'))+
+  theme_classic()+
+  labs(y=expression("-log"["10"] ~ "p" ["adj"]), 
+       x=expression("log"["2"]~"Fold Change"))+
+  theme(axis.text=element_text(size=10, colour = "black"), 
+        axis.line = element_line(colour = "black"),
+        legend.position="none");p.bac.lab
+ggsave(filename = "../Data/output/volcano.bac.lab.svg", plot = p.bac.lab,
+       width = 8, height = 8, device = "svg")
+```
+
+## Generates figure for fungi 
+
+### Makes df for figure
+```{r, message=F, warning=F}
+res_prim = compost_ancom_fun_SPE$res
+
+df_fig_compost_volcano = res_prim %>%
+  dplyr::filter(p_CompostCOMP <1) %>%
+  dplyr::arrange(desc(lfc_CompostCOMP)) %>%
+  dplyr::filter(passed_ss_CompostCOMP == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_CompostCOMP > 0, "Positive LFC", "Negative LFC"))
+df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
+df_fig_compost$direct = factor(df_fig_compost$direct,
+                               levels = c("Positive LFC", "Negative LFC"))
+
+
+df_fig_compost_volcano$sig <- ifelse(df_fig_compost_volcano$p_CompostCOMP>0.01, "NS",
+                                       ifelse(df_fig_compost_volcano$p_CompostCOMP==0.01, "NS",
+                                              ifelse(df_fig_compost_volcano$p_CompostCOMP<0.01, "sig",NA)))
+df_fig_compost_volcano$sig.stage <- paste(df_fig_compost_volcano$direct,df_fig_compost_volcano$sig)
+
+
+df_fig_compost_volcano$colors <- ifelse(df_fig_compost_volcano$sig=="NS", "NS",
+                        ifelse(df_fig_compost_volcano$sig.stage=='Positive LFC sig',"Compost",
+                               ifelse(df_fig_compost_volcano$sig.stage=='Negative LFC sig','No Compost',NA)))
+df_fig_compost_volcano<- arrange(df_fig_compost_volcano, -log(p_CompostCOMP))
+```
+
+### makes fig
+```{r, message=F, warning=F}
+p.fun.lab<-ggplot(data=df_fig_compost_volcano)+
+  geom_point(alpha=0.85,mapping= aes(
+    fill=colors, x=lfc_CompostCOMP,y=-log(p_CompostCOMP)),
+    size=5,color='black',pch=21) +
+  scale_fill_manual(values = c('chocolate4','gray50'))+
+  theme_classic()+
+  labs(x=expression("log"["2"]~"Fold Change"))+
+  theme(axis.text=element_text(size=10, colour = "black"), 
+        axis.line = element_line(colour = "black"),
+        axis.title.y=element_blank(),
+        legend.position="none");p.fun.lab
+
+ggsave(filename = "../Data/output/volcano.fun.lab.svg", plot = p.fun.lab,    width = 8, height = 8, device = "svg")
+
+```
+
+# Field trial
+
+## Read in data
+```{r, message=F, warning=F}
+bacterial_otu_mat<- read_csv('../Data/Bloom_otu_table_Bac.csv',)
+fungal_otu_mat<- read_csv('../Data/Bloom_otu_table_Fun.csv',)
+bacterial_tax_mat<- read_csv('../Data/Bloom_taxonomy_table_Bac.csv',)
+fungal_tax_mat<- read_csv('../Data/Bloom_taxonomy_table_Fun.csv',)
+comb_samples_df <- read_csv('../Data/Bloom_sample_info.csv',)
+```
+
+## Create phyloseq and tse objects
+```{r, message=F, warning=F}
+bacterial_otu_mat <- bacterial_otu_mat %>%
+  tibble::column_to_rownames("...1") 
+fungal_otu_mat <- fungal_otu_mat %>%
+  tibble::column_to_rownames("...1") 
+bacterial_tax_mat <- bacterial_tax_mat %>%
+  tibble::column_to_rownames("...1") 
+fungal_tax_mat <- fungal_tax_mat %>%
+  tibble::column_to_rownames("...1") 
+comb_samples_df <- comb_samples_df %>%
+  tibble::column_to_rownames("IMR.Label")
+
+bacterial_tax_mat$Species <- if_else(is.na(bacterial_tax_mat$Species),NA,paste(bacterial_tax_mat$Genus,"_",bacterial_tax_mat$Species,sep = ""))
+fungal_tax_mat$Species <- if_else(is.na(fungal_tax_mat$Species),NA,paste("s__",substr(fungal_tax_mat$Genus, 4, nchar(fungal_tax_mat$Genus)),"_",substr(fungal_tax_mat$Species, 4, nchar(fungal_tax_mat$Species)),sep = ""))
+
+bacterial_tax_mat$Kingdom<-sub("^","k__",bacterial_tax_mat$Kingdom)
+bacterial_tax_mat$Phylum<-sub("^","p__",bacterial_tax_mat$Phylum)
+bacterial_tax_mat$Class<-sub("^","c__",bacterial_tax_mat$Class)
+bacterial_tax_mat$Order<-sub("^","o__",bacterial_tax_mat$Order)
+bacterial_tax_mat$Family<-sub("^","f__",bacterial_tax_mat$Family)
+bacterial_tax_mat$Genus<-sub("^","g__",bacterial_tax_mat$Genus)
+bacterial_tax_mat$Species<-sub("^","s__",bacterial_tax_mat$Species)
+
+bacterial_tax_mat <- as.data.frame(bacterial_tax_mat)
+fungal_tax_mat <- as.data.frame(fungal_tax_mat)
+
+bacterial_tax_mat$Species[grep('incertae', bacterial_tax_mat$Species, ignore.case = TRUE)] <- NA
+bacterial_tax_mat$Species[grep('unknown', bacterial_tax_mat$Species, ignore.case = TRUE)] <- NA
+bacterial_tax_mat$Genus[grep('incertae', bacterial_tax_mat$Genus, ignore.case = TRUE)] <- NA
+bacterial_tax_mat$Genus[grep('unknown', bacterial_tax_mat$Genus, ignore.case = TRUE)] <- NA
+bacterial_tax_mat$Family[grep('incertae', bacterial_tax_mat$Family, ignore.case = TRUE)] <- NA
+bacterial_tax_mat$Family[grep('unknown', bacterial_tax_mat$Family, ignore.case = TRUE)] <- NA
+fungal_tax_mat$Species[grep('incertae', fungal_tax_mat$Species, ignore.case = TRUE)] <- NA
+fungal_tax_mat$Species[grep('unknown', fungal_tax_mat$Species, ignore.case = TRUE)] <- NA
+fungal_tax_mat$Genus[grep('incertae', fungal_tax_mat$Genus, ignore.case = TRUE)] <- NA
+fungal_tax_mat$Genus[grep('unknown', fungal_tax_mat$Genus, ignore.case = TRUE)] <- NA
+fungal_tax_mat$Family[grep('incertae', fungal_tax_mat$Family, ignore.case = TRUE)] <- NA
+fungal_tax_mat$Family[grep('unknown', fungal_tax_mat$Family, ignore.case = TRUE)] <- NA
+
+bac_combined_tax <- if_else(bacterial_tax_mat$Species == "_","test_true",bacterial_tax_mat$Species, missing = bacterial_tax_mat$Genus)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = bacterial_tax_mat$Family)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = bacterial_tax_mat$Order)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = bacterial_tax_mat$Class)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = bacterial_tax_mat$Phylum)
+bac_combined_tax <- if_else(bac_combined_tax == "_","test_true",bac_combined_tax, missing = bacterial_tax_mat$Kingdom)
+bac_combined_tax <- melt(data.frame(rownames(bacterial_tax_mat),bac_combined_tax))
+colnames(bac_combined_tax) <- c("OTU", "taxon")
+
+fun_combined_tax <- if_else(fungal_tax_mat$Species == "_","test_true",fungal_tax_mat$Species, missing = fungal_tax_mat$Genus)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = fungal_tax_mat$Family)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = fungal_tax_mat$Order)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = fungal_tax_mat$Class)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = fungal_tax_mat$Phylum)
+fun_combined_tax <- if_else(fun_combined_tax == "_","test_true",fun_combined_tax, missing = fungal_tax_mat$Kingdom)
+fun_combined_tax <- melt(data.frame(rownames(fungal_tax_mat),fun_combined_tax))
+colnames(fun_combined_tax) <- c("OTU", "taxon")
+
+comb_samples_df$Participant.ID <- as.factor(comb_samples_df$Participant.ID)
+comb_samples_df$B.E_10_Compost <- as.factor(comb_samples_df$B.E_10_Compost)
+
+comb_samples_df$IMR_label <- rownames(comb_samples_df)
+
+bacterial_otu_mat <- as.matrix(bacterial_otu_mat)
+fungal_otu_mat <- as.matrix(fungal_otu_mat)
+bacterial_tax_mat <- as.matrix(bacterial_tax_mat)
+fungal_tax_mat <- as.matrix(fungal_tax_mat)
+
+OTU = otu_table(bacterial_otu_mat, taxa_are_rows = TRUE)
+TAX = tax_table(bacterial_tax_mat)
+samples = sample_data(comb_samples_df)
+
+bacterial_phyloseq <- phyloseq(OTU, TAX, samples)
+bacterial_phyloseq
+
+OTU = otu_table(fungal_otu_mat, taxa_are_rows = TRUE)
+TAX = tax_table(fungal_tax_mat)
+samples = sample_data(comb_samples_df)
+
+fungal_phyloseq <- phyloseq(OTU, TAX, samples)
+fungal_phyloseq
+
+
+###makes subset of bacterial and fungal samples for 20 paired composted/uncomposted sites
+bac_compost_phyloseq <- subset_samples(bacterial_phyloseq, 
+                                       Participant.ID =="132" |
+                                         Participant.ID =="118"|
+                                         Participant.ID =="156"|
+                                         Participant.ID =="172"| 
+                                         Participant.ID =="21"| 
+                                         Participant.ID =="213"| 
+                                         Participant.ID =="223"| 
+                                         Participant.ID =="226"| 
+                                         Participant.ID =="232"| 
+                                         Participant.ID =="244")
+sample_names(bac_compost_phyloseq)
+fun_compost_phyloseq <- subset_samples(fungal_phyloseq, 
+                                       Participant.ID =="132" | 
+                                         Participant.ID =="118"| 
+                                         Participant.ID =="156"| 
+                                         Participant.ID =="172"| 
+                                         Participant.ID =="21"| 
+                                         Participant.ID =="213"| 
+                                         Participant.ID =="223"| 
+                                         Participant.ID =="226"| 
+                                         Participant.ID =="232"| 
+                                         Participant.ID =="244")
+sample_names(fun_compost_phyloseq)
+###makes tree summarized experiment objects from for each subset
+bac_compost_tse = mia::convertFromPhyloseq(bac_compost_phyloseq)
+fun_compost_tse = mia::convertFromPhyloseq(fun_compost_phyloseq)
+
+```
+
+## Run ancombc
+```{r, message=F, warning=F}
+###runs ancombc2 again for fungi and bacteria, but at the species level
+#for bacteria
+set.seed(123)
+Sys.time()
+compost_ancom_bac_SPE = ancombc2(data = bac_compost_tse, assay_name = "counts", tax_level = "Species",
+                                 fix_formula = "B.E_10_Compost",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+#for fungi
+set.seed(123)
+Sys.time() 
+compost_ancom_fun_SPE = ancombc2(data = fun_compost_tse, assay_name = "counts", tax_level = "Species",
+                                 fix_formula = "B.E_10_Compost",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+```
+
+### Save RDS
+```{r, message=F, warning=F}
+saveRDS(compost_ancom_bac_SPE, file = '../Data/output/Short_read_compost_ancom_bac_SPE.rds', ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+saveRDS(compost_ancom_fun_SPE, file = '../Data/output/Short_read_compost_ancom_fun_SPE.rds', ascii = FALSE, version = NULL,
+        compress = TRUE, refhook = NULL)
+
+
+compost_ancom_bac_SPE <- readRDS(file = '../Data/output/Short_read_compost_ancom_bac_SPE.rds', refhook = NULL)
+compost_ancom_fun_SPE <- readRDS(file = '../Data/output/Short_read_compost_ancom_fun_SPE.rds', refhook = NULL)
+```
+
+## Make figure for bacteria
+
+### Get df ready for figure
+```{r, message=F, warning=F}
+res_prim = compost_ancom_bac_SPE$res
+
+df_fig_compost_volcano = res_prim %>%
+  dplyr::filter(p_B.E_10_Compost1 <1) %>%
+  dplyr::arrange(desc(lfc_B.E_10_Compost1)) %>%
+  dplyr::filter(passed_ss_B.E_10_Compost1 == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_B.E_10_Compost1 > 0, "Positive LFC", "Negative LFC"))
+df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
+df_fig_compost$direct = factor(df_fig_compost$direct,
+                               levels = c("Positive LFC", "Negative LFC"))
+
+
+df_fig_compost_volcano$sig <- ifelse(df_fig_compost_volcano$p_B.E_10_Compost1>0.01, "NS",
+                                       ifelse(df_fig_compost_volcano$p_B.E_10_Compost1==0.01, "NS",
+                                              ifelse(df_fig_compost_volcano$p_B.E_10_Compost1<0.01, "sig",NA)))
+df_fig_compost_volcano$sig.stage <- paste(df_fig_compost_volcano$direct,df_fig_compost_volcano$sig)
+
+
+df_fig_compost_volcano$colors <- ifelse(df_fig_compost_volcano$sig=="NS", "NS",
+                        ifelse(df_fig_compost_volcano$sig.stage=='Positive LFC sig',"Compost",
+                               ifelse(df_fig_compost_volcano$sig.stage=='Negative LFC sig','No Compost',NA)))
+df_fig_compost_volcano<- arrange(df_fig_compost_volcano, -log(p_B.E_10_Compost1))
+```
+
+### Make figure for bacteria
+```{r, message=F, warning=F}
+p.bac.field<-ggplot(data=df_fig_compost_volcano)+
+  geom_point(alpha=0.85,mapping= aes(
+    fill=colors, x=lfc_B.E_10_Compost1,y=-log(p_B.E_10_Compost1)),
+    size=5,color='black',pch=21) +
+  scale_fill_manual(values = c('chocolate4','gray50'))+
+  theme_classic()+
+  labs(y=expression("-log"["10"] ~ "p" ["adj"]), 
+       x=expression("log"["2"]~"Fold Change"))+
+  theme(axis.text=element_text(size=10, colour = "black"), 
+        axis.line = element_line(colour = "black"),
+        legend.position="none");p.bac.field
+ggsave(filename = "../Data/output/volcano.bac.field.svg", plot = p.bac.field,
+       width = 8, height = 8, device = "svg")
+
+
+```
+
+### Makes df for fungi
+```{r, message=F, warning=F}
+res_prim = compost_ancom_fun_SPE$res
+
+
+df_fig_compost = res_prim %>%
+  dplyr::filter(p_B.E_10_Compost1 <0.01) %>%
+  dplyr::arrange(desc(lfc_B.E_10_Compost1)) %>%
+  dplyr::filter(passed_ss_B.E_10_Compost1 == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_B.E_10_Compost1 > 0, "Positive LFC", "Negative LFC"))
+df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
+df_fig_compost$direct = factor(df_fig_compost$direct, 
+                               levels = c("Positive LFC", "Negative LFC"))
+
+
+write.csv(df_fig_compost,"../Data/output/Short_read_fun_ancom_SPE_figure_data.csv")
+
+df_fig_compost_volcano = res_prim %>%
+  dplyr::filter(p_B.E_10_Compost1 <1) %>%
+  dplyr::arrange(desc(lfc_B.E_10_Compost1)) %>%
+  dplyr::filter(passed_ss_B.E_10_Compost1 == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_B.E_10_Compost1 > 0, "Positive LFC", "Negative LFC"))
+df_fig_compost$taxon = factor(df_fig_compost$taxon, levels = df_fig_compost$taxon)
+df_fig_compost$direct = factor(df_fig_compost$direct,
+                               levels = c("Positive LFC", "Negative LFC"))
+
+
+df_fig_compost_volcano$sig <- ifelse(df_fig_compost_volcano$p_B.E_10_Compost1>0.01, "NS",
+                                       ifelse(df_fig_compost_volcano$p_B.E_10_Compost1==0.01, "NS",
+                                              ifelse(df_fig_compost_volcano$p_B.E_10_Compost1<0.01, "sig",NA)))
+df_fig_compost_volcano$sig.stage <- paste(df_fig_compost_volcano$direct,df_fig_compost_volcano$sig)
+
+
+df_fig_compost_volcano$colors <- ifelse(df_fig_compost_volcano$sig=="NS", "NS",
+                        ifelse(df_fig_compost_volcano$sig.stage=='Positive LFC sig',"Compost",
+                               ifelse(df_fig_compost_volcano$sig.stage=='Negative LFC sig','No Compost',NA)))
+df_fig_compost_volcano<- arrange(df_fig_compost_volcano, -log(p_B.E_10_Compost1))
+```
+
+
+```{r, message=F, warning=F}
+p.fun.field<-ggplot(data=df_fig_compost_volcano)+
+  geom_point(alpha=0.85,mapping= aes(
+    fill=colors, x=lfc_B.E_10_Compost1,y=-log(p_B.E_10_Compost1)),
+    size=5,color='black',pch=21) +
+  scale_fill_manual(values = c('chocolate4','cyan4','gray50'))+
+  theme_classic()+
+  labs(y=expression("-log"["10"] ~ "p" ["adj"]), 
+       x=expression("log"["2"]~"Fold Change"))+
+  theme(axis.text=element_text(size=10, colour = "black"), 
+        axis.line = element_line(colour = "black"),
+        legend.position="none");p.fun.field
+ggsave(filename = "../Data/output/volcano.fun.field.svg", plot = p.fun.field,  width = 8, height = 8, device = "svg")
+```
+
+# Compile figure
+```{r, message=F, warning=F}
+grobs <- ggplotGrob(p.fun.field)$grobs
+legend <- grobs[[which(sapply(grobs, function(x) x$name) == "guide-box")]]
+
+fig6.nolegend <- plot_grid(p.bac.field, p.fun.field,p.bac.lab,p.fun.lab, ncol = 2, nrow = 2,labels = c("A", "B", "C","D"),label_size = 15, rel_heights = c(1,1,1,1));fig6.nolegend
+fig6<-plot_grid(fig6.nolegend,legend, ncol=2, rel_widths=c(1,0.1));fig6
+
+ggsave(filename = "../Data/output/volcano.fig6.svg", plot = fig6, width = 12, height = 8, device = "svg")
+```
+

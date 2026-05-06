@@ -6,7 +6,7 @@ Code and data in this repository correspond to "Aphid populations vary in a soil
 
 Each Rmd corresponds to the code used to generate a figure in the paper described above.
 
-## Figure_1_stats.Rmd
+## Fig_1_Stats_FieldSoilMapMicrobes.Rmd
 
 Description:
 
@@ -28,7 +28,7 @@ Outputs: <br>
 -   Figure S1
 -   Results corresponding to Figures 1 and S1
 
-## Figure_2_stats.Rmd
+## Fig_2_Stats_LabSoilMapMicrobeAphid.Rmd
 
 -   Description: This file corresponds to the code used to generate figure 2. It includes code to generate a map, alpha diversity, and beta diversity.
 
@@ -46,8 +46,75 @@ Outputs:
 -   Figure_2.svg
 
 
-## Figure_3_stats.Rmd
+## Fig_3_Stats_LabVolcanoFarm.Rmd
 
--   Description: This file corresponds to the code used to generate figure 2. It includes code to generate a map, alpha diversity, and beta diversity.
--   Inputs:
--   Output: Results corresponding to figure 3. Figure 3.
+-   Description: This file corresponds to the code used to generate figure 3. It includes code to generate volcano plots and running ANCOMBC to compare taxa that vary between two farms.  
+
+Inputs: <br>
+
+-   Sequencing_data_formatted_for_analysis(01.28.2026).xlsx
+-   EJM-CLS-22F_pct98.csv
+-   EJM-CLS-22B_pct98.csv
+-   sample_data_field_switch_samples_bac.csv
+ 
+
+Outputs: <br>
+
+-   figure 3
+-   ancom_bac_farm.rds
+-   ancom_fun_farm.rds
+
+## Fig_4_Stats_CrossRemAlphaBeta.Rmd
+
+
+-   Description: This contains the code used to generate figure 4. Alpha and beta diversity are compared for two farms used in this study.
+
+
+Inputs: <br>
+
+-   EJM-CLS-22F_pct98.csv
+-   EJM-CLS-22B_pct98.csv
+-   Bacterial_alpha_div_data.csv
+-   Fungal_alpha_div_data.csv
+ 
+
+Outputs: <br>
+
+-   figure 4  
+
+
+## Fig_5_Stats_CrossRemBetaDisper
+
+-   Description: This file contains code   
+
+
+Inputs:
+
+-   EJM-CLS-22F_pct98.csv
+-   EJM-CLS-22B_pct98.csv
+-   Sequencing_data_formatted_for_analysis(01.28.2026).xlsx
+ 
+
+Outputs:
+
+-   Figure 5
+
+## Fig_6_Stats_LabVolcanoCompost.Rmd  
+
+-   Description: Contains code corresponding to fig 6. This includes volcano plots and running an ANCOMBC for compost/no compost treatments.  
+
+Inputs: <br>
+
+-   EJM-CLS-22F_pct98.csv
+-   EJM-CLS-22B_pct98.csv
+-   Sequencing_data_formatted_for_analysis(01.28.2026).xlsx
+-   Bloom_otu_table_Bac.csv
+-   Bloom_otu_table_Fun.csv
+-   Bloom_taxonomy_table_Bac.csv
+-   Bloom_taxonomy_table_Fun.csv
+-   Bloom_sample_info.csv  
+ 
+
+Outputs: <br>  
+
+-   figure 6
