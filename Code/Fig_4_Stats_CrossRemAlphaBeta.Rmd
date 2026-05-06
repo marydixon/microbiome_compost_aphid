@@ -1,0 +1,365 @@
+---
+title: "Fig_3_Stats"
+author: "MD and EM"
+date: "`r Sys.Date()`"
+output: 
+ html_document:
+   toc: true
+   toc_float: true
+   editor_options:
+   chunck_output_type: console
+---
+Inputs: <br>
+
+-   EJM-CLS-22F_pct98.csv
+-   EJM-CLS-22B_pct98.csv
+-   Bacterial_alpha_div_data.csv
+-   Fungal_alpha_div_data.csv
+ 
+
+Outputs: <br>
+
+-   figure 4
+
+
+# Load libraries 
+```{r, results = 'hide', message=FALSE}
+knitr::opts_chunk$set(out.width = "100%")
+library(cowplot)
+library(tidyverse)
+library(emmeans)
+library(readxl)
+library(phyloseq)
+library(mia)
+library(vegan)
+library(pairwiseAdonis)
+library(car)
+library(agricolae)
+```
+
+# Read in data 
+```{r}
+FUN <- read.csv("../Data/EJM-CLS-22F_pct98.csv")
+BAC <- read.csv("../Data/EJM-CLS-22B_pct98.csv")
+BAC <- BAC[!is.na(BAC$Kingdom),]
+FUN <- FUN[FUN$Kingdom =="k__Fungi",]
+FUN <- FUN[!is.na(FUN$Kingdom),]
+SAMPLE_DATA <- as.data.frame(read_xlsx("../Data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+
+rownames(FUN) <- FUN$X
+FUN <- FUN[,-1]
+rownames(BAC) <- BAC$X
+BAC <- BAC[,-1]
+
+BAC$Kingdom<-sub("^","k__",BAC$Kingdom)
+BAC$Kingdom<-sub("k__NA",NA,BAC$Kingdom)
+BAC$Phylum<-sub("^","p__",BAC$Phylum)
+BAC$Phylum<-sub("p__NA",NA,BAC$Phylum)
+BAC$Class<-sub("^","c__",BAC$Class)
+BAC$Class<-sub("c__NA",NA,BAC$Class)
+BAC$Order<-sub("^","o__",BAC$Order)
+BAC$Order<-sub("o__NA",NA,BAC$Order)
+BAC$Family<-sub("^","f__",BAC$Family)
+BAC$Family<-sub("f__NA",NA,BAC$Family)
+BAC$Genus<-sub("^","g__",BAC$Genus)
+BAC$Genus<-sub("g__NA",NA,BAC$Genus)
+BAC$Species<-sub("^","s__",BAC$Species)
+BAC$Species<-sub("s__NA",NA,BAC$Species)
+
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+
+FUN_OTU<- FUN[,8:length(colnames(FUN))]
+FUN_TAX <- FUN[,1:7]
+BAC_OTU<- BAC[,8:length(colnames(BAC))]
+BAC_TAX <- BAC[,1:7]
+
+BAC_OTU <- BAC_OTU[rowSums(BAC_OTU)>1,]
+FUN_OTU <- FUN_OTU[rowSums(FUN_OTU)>1,]
+
+BAC_OTU <- BAC_OTU[,colSums(BAC_OTU)>1000]
+FUN_OTU <- FUN_OTU[,colSums(FUN_OTU)>1000]
+
+colSums(BAC_OTU)
+
+rownames(SAMPLE_DATA)<- SAMPLE_DATA$SEQUENCED_INV_NUMBER
+```
+
+# Bacteria PCoA 
+
+## Manage Data
+
+### Generate phyloseq object
+
+```{r}
+SAMPLE_DATA_LAB <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[!is.na(SAMPLE_DATA_LAB$Collection_Date),]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[SAMPLE_DATA_LAB$Collection_Date!="45777",]
+OTU <- BAC_OTU[,colnames(BAC_OTU) %in% rownames(SAMPLE_DATA_LAB)]
+OTU <- OTU[rowSums(OTU)> 1,]
+
+rowSums(OTU)
+
+OTU <- as.matrix(OTU)
+TAX = BAC_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_LAB[colnames(OTU),]
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" 
+```
+
+### Model for permanova
+```{r, message = F}
+# Adonis - Mary code
+P.bac.count <- convertToPhyloseq(em_tse,assay.type = "counts")
+P.bac.rel = transform_sample_counts(P.bac.count, function(x) x / sum(x))
+d <- data.frame(sample_data(P.bac.rel))
+data <- data.frame(t(otu_table(P.bac.rel)))
+data <- decostand(data, method='hellinger')
+
+dist <- vegdist(data, method='bray')
+
+adonis2(dist ~  Slurry*Compost, data=d, perm=999, by = "terms")
+pairwise.adonis(dist,factors=d$Compost, p.adjust.m = "fdr")
+pairwise.adonis(dist,factors=interaction(d$Compost,d$Slurry), p.adjust.m = "fdr")
+```
+
+## PCoA
+
+### PCoA df
+```{r, warning = F}
+pcoa_results <- cmdscale(dist, k = 2, eig = TRUE, add = TRUE) 
+pcoa_positions <- as_tibble(pcoa_results$points)
+colnames(pcoa_positions) <- c("PCoA1", "PCoA2") 
+points <- scores(pcoa_results)
+points<- as.data.frame(points)
+colnames(points) <- c("PCoA1", "PCoA2") 
+points$SEQUENCED_INV_NUMBER <- rownames(points)
+
+eigenvalues <- pcoa_results$eig
+percent_explained_PC1 <- round(100 * eigenvalues[1] / sum(eigenvalues), 1)
+percent_explained_PC2 <- round(100 * eigenvalues[2] / sum(eigenvalues), 1)
+d <- data.frame(sample_data(P.bac.rel))
+pcoa_data <- dplyr::inner_join(points,d, by = "SEQUENCED_INV_NUMBER")
+pcoa_data$Year <- as.factor(pcoa_data$Year)
+```
+
+### PCoA Figure
+```{r}
+pcoa_data <- pcoa_data %>%
+mutate(Compost = as_factor(Compost)) %>%
+mutate(Compost = fct_relevel(Compost, "NONE", "COMP"))
+
+p.bac.pcoa <- ggplot(data = pcoa_data, aes(x=PCoA1,y=PCoA2)) +
+  geom_point(aes(color = interaction(Compost, Slurry)), size = 5) +
+  labs(x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = "")) +
+  stat_ellipse(aes(group= interaction(Compost, Slurry), color= interaction(Compost, Slurry)), type='t', level=0.95) +
+  scale_color_discrete(palette = c("#EC7063","#B03A2E","#5DADE2","#21618C")) +
+  theme_classic()+
+  theme(legend.position = "none");p.bac.pcoa
+```
+
+# Fungi PCoA
+## Manage Data
+
+### Generate phyloseq object
+```{r}
+SAMPLE_DATA_LAB <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="LAB",]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[!is.na(SAMPLE_DATA_LAB$Collection_Date),]
+SAMPLE_DATA_LAB <- SAMPLE_DATA_LAB[SAMPLE_DATA_LAB$Collection_Date!="45777",]
+
+
+OTU <- FUN_OTU[,colnames(FUN_OTU) %in% rownames(SAMPLE_DATA_LAB)]
+OTU <- OTU[rowSums(OTU)> 1,]
+
+OTU <- as.matrix(OTU)
+TAX = FUN_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_LAB[colnames(OTU),]
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" 
+
+```
+
+### Model for permanova
+```{r, message = F}
+P.fun.count <- convertToPhyloseq(em_tse,assay.type = "counts")
+P.fun.rel = transform_sample_counts(P.fun.count, function(x) x / sum(x))
+d <- data.frame(sample_data(P.fun.rel))
+data <- data.frame(t(otu_table(P.fun.rel)))
+data <- decostand(data, method='hellinger')
+
+dist <- vegdist(data, method='bray')
+adonis2(dist ~  Slurry*Compost, data=d, perm=999, by = "terms")
+pairwise.adonis(dist,factors=d$Compost, p.adjust.m = "fdr")
+pairwise.adonis(dist,factors=interaction(d$Compost,d$Slurry), p.adjust.m = "fdr")
+```
+
+## PCoA
+
+## Make df for PCA
+
+```{r, warning = F}
+pcoa_results <- cmdscale(dist, k = 2, eig = TRUE, add = TRUE) 
+pcoa_positions <- as_tibble(pcoa_results$points)
+colnames(pcoa_positions) <- c("PCoA1", "PCoA2") 
+points <- scores(pcoa_results)
+points<- as.data.frame(points)
+colnames(points) <- c("PCoA1", "PCoA2") 
+points$SEQUENCED_INV_NUMBER <- rownames(points)
+
+
+eigenvalues <- pcoa_results$eig
+percent_explained_PC1 <- round(100 * eigenvalues[1] / sum(eigenvalues), 1)
+percent_explained_PC2 <- round(100 * eigenvalues[2] / sum(eigenvalues), 1)
+d <- data.frame(sample_data(P.fun.rel))
+pcoa_data <- dplyr::inner_join(points,d, by = "SEQUENCED_INV_NUMBER")
+
+pcoa_data <- pcoa_data %>%
+mutate(Compost = as_factor(Compost)) %>%
+mutate(Compost = fct_relevel(Compost, "NONE", "COMP"))
+```
+
+## PCoA Figure
+```{r, message= F, warning=F}
+p.fun.pcoa <- ggplot(data = pcoa_data, aes(x=PCoA1,y=PCoA2)) +
+  geom_point(aes(color = interaction(Compost, Slurry)), size = 5) +
+  labs(x = paste("PCoA 1 (", percent_explained_PC1, "%)", sep = ""),
+    y = paste("PCoA 2 (", percent_explained_PC2, "%)", sep = "")) +
+  stat_ellipse(aes(group= interaction(Compost, Slurry), color= interaction(Compost, Slurry)), type='t', level=0.95) +
+  scale_color_discrete(palette = c("#EC7063","#B03A2E","#5DADE2","#21618C"), labels = c("Crossroads No Compost", "Crossroads With Compost", "Remembrance No Compost", "Remembrance With Compost")) +
+  theme_classic()+
+  theme(legend.position = "inside",
+        legend.position.inside = c(0.8, 0.9),
+        legend.title = element_blank());p.fun.pcoa
+```
+
+## Compiled PCoA
+```{r, message= F, warning=F}
+fig4.bottom <- plot_grid(p.bac.pcoa, p.fun.pcoa, labels = c('C', 'D'), rel_widths = c(1, 1));fig4.bottom
+ggsave(filename = "../Data/output/fig4.pcoa.svg", plot = fig4.bottom, width = 11, height = 5, device = "svg")
+```
+
+
+# Alpha diversity
+
+## Read in data 
+```{r}
+bac_alpha <- read.csv("../Data/Bacterial_alpha_div_data.csv")
+fun_alpha <- read.csv("../Data/Fungal_alpha_div_data.csv")
+```
+
+## Run model for bacteria
+```{r}
+mod <- lm(shannon.Estimator~Slurry*Compost, data=bac_alpha)
+par(mfrow=c(2,2))
+plot(mod)
+Anova(mod, Type = 3)
+emmip(mod, Compost ~ Slurry, CIs = TRUE)
+res <- emmeans(mod, list(pairwise ~ Compost*Slurry), adjust = "fdr")
+plot(res[[1]], horizontal=F)
+
+t <- HSD.test(mod, "Slurry");t
+t <- HSD.test(mod, "Compost");t
+```
+
+## Make bacteria figure 
+
+Generate df for figure
+```{r, message=F}
+bac_alpha$letters <- ifelse(bac_alpha$Slurry == "REM" & bac_alpha$Compost == "NONE", "b",  
+                            ifelse(bac_alpha$Slurry == "REM" & bac_alpha$Compost == "COMP", "a",
+                                   ifelse(bac_alpha$Slurry == "CROSS" & bac_alpha$Compost == "NONE", "b",
+                                          ifelse(bac_alpha$Slurry == "CROSS" & bac_alpha$Compost == "COMP", "a",NA))))
+
+bac_alpha$combined <- paste(bac_alpha$Slurry,bac_alpha$Compost)
+bac_alpha$combined = factor(bac_alpha$combined, levels=c("CROSS NONE", "CROSS COMP", "REM NONE", "REM COMP"))
+```
+
+Make figure
+```{r}
+p.bac.alpha <- ggplot(bac_alpha, aes(combined, shannon.Estimator, fill = combined)) +
+  geom_bar(stat = "summary", position = "dodge") +
+  geom_errorbar(stat = "summary", position = "dodge", width=0.3, alpha=0.9, linewidth=0.8) +
+  geom_jitter(width = 0.1, height = 0,color = "gray25", alpha = 0.6) +
+  geom_text(stat = "summary", aes(label = letters),position=position_dodge(0.9), vjust = -2, hjust = -0.2, size = 5)+
+  scale_fill_manual(values=c("#EC7063","#B03A2E","#5DADE2","#21618C")) +
+  scale_x_discrete(labels=c('Crossroads\nNo Compost','Crossroads\nWith Compost','Remembrance\nNo Compost','Remembrance\nWith Compost'))+
+  xlab(label = "") +
+  ylab(label = "Asymptotic Shannon Diversity Estimate") +
+  theme_classic()+
+  theme(legend.position = "none");p.bac.alpha
+```
+
+## Run model for fungi
+```{r}
+mod <- lm(shannon.Estimator~Slurry*Compost, data=fun_alpha)
+plot(mod)
+Anova(mod, Type = 3)
+emmip(mod, Compost ~ Slurry, CIs = TRUE)
+res <- emmeans(mod, list(pairwise ~ Compost*Slurry), adjust = "fdr")
+plot(res[[1]], horizontal=F)
+
+t <- HSD.test(mod, "Slurry");t
+t <- HSD.test(mod, "Compost");t
+```
+
+## Make figure for fungi
+
+Generate df for figure
+```{r, message= F, warning=F}
+fun_alpha$letters <- ifelse(fun_alpha$Slurry == "REM" & fun_alpha$Compost == "NONE", "b",  
+                            ifelse(fun_alpha$Slurry == "REM" & fun_alpha$Compost == "COMP", "a",
+                                   ifelse(fun_alpha$Slurry == "CROSS" & fun_alpha$Compost == "NONE", "b",
+                                          ifelse(fun_alpha$Slurry == "CROSS" & fun_alpha$Compost == "COMP", "a",NA))))
+
+fun_alpha$combined <- paste(fun_alpha$Slurry,fun_alpha$Compost)
+fun_alpha$combined = factor(fun_alpha$combined, levels=c("CROSS NONE", "CROSS COMP", "REM NONE", "REM COMP"))
+```
+
+Generate figure for fungi
+```{r, message= F, warning=F}
+p.fun.alpha <- ggplot(fun_alpha, aes(combined, shannon.Estimator, fill = combined)) +
+  geom_bar(stat = "summary", position = "dodge") +
+  geom_errorbar(stat = "summary", position = "dodge", width=0.3, alpha=0.9, linewidth=0.8) +
+  geom_jitter(width = 0.1, height = 0,color = "gray25", alpha = 0.6) +
+  geom_text(stat = "summary", aes(label = letters),position=position_dodge(0.9), vjust = -3, hjust = -0.2, size = 5)+
+  scale_fill_manual(values=c("#EC7063","#B03A2E","#5DADE2","#21618C")) +
+  scale_x_discrete(labels=c('Crossroads\nNo Compost','Crossroads\nWith Compost','Remembrance\nNo Compost','Remembrance\nWith Compost'))+
+  xlab(label = "") +
+  theme_classic()+
+  theme(legend.position = "none",
+        axis.title.y = element_blank());p.fun.alpha
+```
+
+# Compile all figs 
+```{r, message= F, warning=F}
+fig4.top<- plot_grid(p.bac.alpha,p.fun.alpha, labels = c("A","B")); fig4.top
+
+fig4 <- plot_grid(fig4.top, fig4.bottom, ncol = 1,nrow = 2);fig4
+
+ggsave(filename = "../Data/output/fig4.svg", plot = fig4,  width = 10, height = 8, device = "svg")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+
+

@@ -1,0 +1,296 @@
+---
+title: "Analysis for Figure 3"
+author: "MD"
+date: "`r Sys.Date()`"
+output: 
+ html_document:
+   toc: true
+   toc_float: true
+   editor_options:
+   chunck_output_type: console
+---
+
+Inputs: <br>
+
+-   Sequencing_data_formatted_for_analysis(01.28.2026).xlsx
+-   EJM-CLS-22F_pct98.csv
+-   EJM-CLS-22B_pct98.csv
+-   sample_data_field_switch_samples_bac.csv
+ 
+
+Outputs: <br>
+
+-   figure 3
+-   ancom_bac_farm.rds
+-   ancom_fun_farm.rds
+
+# Load libraries
+
+```{r, results = 'hide', message=FALSE}
+knitr::opts_chunk$set(out.width = "100%")
+library(ANCOMBC)
+library(tidyverse)
+library(readxl)
+library(phyloseq)
+library(mia)
+library(cowplot)
+```
+
+# Generate phyloseq and tree summarized object
+
+```{r}
+FUN <- read.csv("../Data/EJM-CLS-22F_pct98.csv")
+BAC <- read.csv("../Data/EJM-CLS-22B_pct98.csv")
+BAC <- BAC[!is.na(BAC$Species),]
+FUN <- FUN[FUN$Kingdom =="k__Fungi",]
+FUN <- FUN[!is.na(FUN$Species),]
+SAMPLE_DATA <- as.data.frame(read_xlsx("../Data/Sequencing_data_formatted_for_analysis(01.28.2026).xlsx", sheet = "Soil_sample_info"))
+rownames(FUN) <- FUN$X
+FUN <- FUN[,-1]
+rownames(BAC) <- BAC$X
+BAC <- BAC[,-1]
+BAC$Species <- paste(BAC$Genus,BAC$Species)
+FUN$Species <- paste(FUN$Genus,FUN$Species)
+FUN$Species <- gsub("s__", " ", FUN$Species)
+FUN$Species <- gsub("g__", "", FUN$Species)
+
+SAMPLE_DATA$EJM_SOIL_NUMBER <- as.factor(SAMPLE_DATA$EJM_SOIL_NUMBER)
+
+FUN_OTU<- FUN[,8:length(colnames(FUN))]
+FUN_TAX <- FUN[,1:7]
+BAC_OTU<- BAC[,8:length(colnames(BAC))]
+BAC_TAX <- BAC[,1:7]
+
+BAC_OTU <- BAC_OTU[rowSums(BAC_OTU)>1,]
+FUN_OTU <- FUN_OTU[rowSums(FUN_OTU)>1,]
+
+BAC_OTU <- BAC_OTU[,colSums(BAC_OTU)>1000]
+FUN_OTU <- FUN_OTU[,colSums(FUN_OTU)>1000]
+
+colSums(BAC_OTU)
+
+rownames(SAMPLE_DATA)<- SAMPLE_DATA$SEQUENCED_INV_NUMBER
+```
+
+## Bacteria
+
+```{r, message = F}
+SAMPLE_DATA_FIELD <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="FIELD",]
+OTU <- BAC_OTU[,colnames(BAC_OTU) %in% rownames(SAMPLE_DATA_FIELD)]
+OTU <- OTU[rowSums(OTU)>1,]
+OTU <- as.matrix(OTU)
+TAX = BAC_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_FIELD[colnames(OTU),]
+
+#write.csv(samples, "Data/output/sample_data_field_switch_samples_bac.csv") # REM and NWF got switched in the second year. I read out the table to correct and then read back in.
+samples <- read.csv("../Data/output/sample_data_field_switch_samples_bac.csv")
+samples <- samples %>%
+mutate(Farm = as_factor(Farm)) %>%
+mutate(Farm = fct_relevel(Farm, "CROSS", "TT", "REM", "NMF"))
+
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+
+
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+P.bac <- convertToPhyloseq(em_tse,assay.type = "counts")
+```
+
+## Fungi
+
+```{r, message = F}
+SAMPLE_DATA_FIELD <- SAMPLE_DATA[SAMPLE_DATA$SOIL_SOURCE=="FIELD",]
+OTU <- FUN_OTU[,colnames(FUN_OTU) %in% rownames(SAMPLE_DATA_FIELD)]
+OTU <- OTU[rowSums(OTU)>1,]
+OTU <- as.matrix(OTU)
+TAX = FUN_TAX[rownames(OTU),]
+samples = SAMPLE_DATA_FIELD[colnames(OTU),]
+
+#write.csv(samples, "Data/output/sample_data_field_switch_samples_fun.csv") # REM and NWF got switched in the second year. I read out the table to correct and then read back in.
+samples <- read.csv("../Data/output/sample_data_field_switch_samples_fun.csv")
+samples <- samples %>%
+mutate(Farm = as_factor(Farm)) %>%
+mutate(Farm = fct_relevel(Farm, "CROSS", "TT", "REM", "NMF"))
+
+
+sample_names(samples) <- samples$SEQUENCED_INV_NUMBER
+rownames(samples) <- samples$SEQUENCED_INV_NUMBER
+em_tse <- TreeSummarizedExperiment(assays = list(Count = OTU),
+                                   rowData = TAX,
+                                   colData = samples)
+assayNames(em_tse) <- "counts" #Needed for prevalence filtering
+P.fun <- convertToPhyloseq(em_tse,assay.type = "counts")
+```
+
+## Subset to farms of interest
+
+```{r}
+P.sub.bac <- subset_samples(P.bac, Farm == "TT" | Farm == "CROSS")
+bac_farm_tse = mia::convertFromPhyloseq(P.sub.bac)
+P.sub.fun <- subset_samples(P.fun, Farm == "TT" | Farm == "CROSS")
+fun_farm_tse = mia::convertFromPhyloseq(P.sub.fun)
+```
+
+# Runs ancombc
+
+## Bacteria
+
+```{r}
+set.seed(123)
+Sys.time()
+ancom_bac_SPE = ancombc2(data = bac_farm_tse, assay_name = "counts",tax_level = "Species",
+                                 fix_formula = "Farm",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+saveRDS(ancom_bac_SPE, file = '../Data/output/ancom_bac_farm.rds', ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
+```
+
+## Fungi
+
+```{r}
+set.seed(123)
+Sys.time()
+ancom_fun_SPE = ancombc2(data = fun_farm_tse, assay_name = "counts",tax_level = "Species",
+                                 fix_formula = "Farm",
+                                 p_adj_method = "holm", pseudo_sens = TRUE,
+                                 prv_cut = 0.10, lib_cut = 0, s0_perc = 0.05,
+                                 group = NULL, struc_zero = FALSE, neg_lb = FALSE,
+                                 alpha = 0.05, n_cl = 4, verbose = TRUE,
+                                 global = FALSE, pairwise = FALSE, dunnet = FALSE, trend = FALSE,
+                                 iter_control = list(tol = 1e-2, max_iter = 20, verbose = TRUE),
+                                 em_control = list(tol = 1e-5, max_iter = 100),
+                                 lme_control = lme4::lmerControl(),
+                                 mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
+                                 trend_control = NULL)
+Sys.time()
+saveRDS(ancom_fun_SPE, file = '../Data/output/ancom_fun_farm.rds', ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL)
+```
+
+## Read in RDS
+
+```{r}
+ancom_bac_SPE <- readRDS(file = '../Data/output/ancom_bac_farm.rds', refhook = NULL)
+ancom_fun_SPE <- readRDS(file = '../Data/output/ancom_fun_farm.rds', refhook = NULL)
+
+```
+
+# Generates figure
+
+## Bacteria
+
+### Creates df for figure
+
+```{r}
+res_prim = ancom_bac_SPE$res
+
+df = res_prim %>%
+  dplyr::filter(p_FarmTT <1) %>%
+  dplyr::arrange((lfc_FarmTT)) %>%
+  dplyr::filter(passed_ss_FarmTT == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_FarmTT > 0, "Turtle Tree", "Crossroads"))
+df$taxon = factor(df$taxon, levels = df$taxon)
+df$direct = factor(df$direct,  levels = c("Turtle Tree", "Crossroads"))
+
+df$sig <- ifelse(df$p_FarmTT>0.05, "NS",
+                                       ifelse(df$p_FarmTT==0.05, "NS",
+                                              ifelse(df$p_FarmTT<0.05, "sig",NA)))
+df$sig.stage <- paste(df$direct,df$sig)
+df$colors <- ifelse(df$sig=="NS", "NS",
+                        ifelse(df$sig.stage=='Turtle Tree sig',"Turtle Tree",
+                               ifelse(df$sig.stage=='Crossroads sig','Crossroads',NA)))
+df<- arrange(df, -log(p_FarmTT))
+df$colors <- factor(df$colors, levels=c('Crossroads', 'Turtle Tree', 'NS'))
+
+
+df$enrich <- ifelse(df$p_FarmTT < 0.05, paste(df$taxon), NA)
+```
+
+### Makes figure
+
+```{r, warning = F}
+p.bac<-ggplot(data=df)+
+  geom_point(alpha=0.85,mapping= aes(
+    fill=colors, x=lfc_FarmTT,y=-log(p_FarmTT)),
+    size=5,color='black',pch=21) +
+  scale_fill_manual(values = c('#B03A2E','#D4AC0D','gray50'))+
+  theme_classic()+
+  labs(y=expression("-log"["10"] ~ "p" ["adj"]), 
+       x=expression("log"["2"]~"Fold Change"))+
+  geom_text(aes(label = enrich,x=lfc_FarmTT,y=-log(p_FarmTT)),hjust=-.1, vjust = -.1,fontface="italic")+
+  coord_cartesian(xlim=c(-2.5,5))+
+  theme(axis.text=element_text(size=10, colour = "black"), 
+        axis.line = element_line(colour = "black"),
+        legend.position="none",
+        legend.title = element_blank());p.bac
+
+```
+
+## Fungi
+
+### Creates df for figure
+
+```{r}
+res_prim = ancom_fun_SPE$res
+
+df = res_prim %>%
+  dplyr::filter(p_FarmTT <1) %>%
+  dplyr::arrange((lfc_FarmTT)) %>%
+  dplyr::filter(passed_ss_FarmTT == 1) %>%
+  dplyr::mutate(direct = ifelse(lfc_FarmTT > 0, "Turtle Tree", "Crossroads"))
+df$taxon = factor(df$taxon, levels = df$taxon)
+df$direct = factor(df$direct,  levels = c("Turtle Tree", "Crossroads"))
+
+df$sig <- ifelse(df$p_FarmTT>0.05, "NS",
+                                       ifelse(df$p_FarmTT==0.05, "NS",
+                                              ifelse(df$p_FarmTT<0.05, "sig",NA)))
+df$sig.stage <- paste(df$direct,df$sig)
+df$colors <- ifelse(df$sig=="NS", "NS",
+                        ifelse(df$sig.stage=='Turtle Tree sig',"Turtle Tree",
+                               ifelse(df$sig.stage=='Crossroads sig','Crossroads',NA)))
+df<- arrange(df, -log(p_FarmTT))
+df$colors <- factor(df$colors, levels=c('Crossroads', 'Turtle Tree', 'NS'))
+
+
+df$enrich <- ifelse(df$p_FarmTT < 0.05, paste(df$taxon), NA)
+```
+
+### Makes figure
+
+```{r, warning = F}
+p.fun<-ggplot(data=df)+
+  geom_point(alpha=0.85,mapping= aes(
+    fill=colors, x=lfc_FarmTT,y=-log(p_FarmTT)),
+    size=5,color='black',pch=21) +
+  scale_fill_manual(values = c('#B03A2E','#D4AC0D','gray50'))+
+  theme_classic()+
+  labs(y=expression("-log"["10"] ~ "p" ["adj"]), 
+       x=expression("log"["2"]~"Fold Change"))+
+  geom_text(aes(label = enrich,x=lfc_FarmTT,y=-log(p_FarmTT)),hjust=-.1, vjust = -.1,fontface="italic")+
+  coord_cartesian(xlim=c(-6,6))+
+  theme(axis.text=element_text(size=10, colour = "black"), 
+        axis.line = element_line(colour = "black"),
+        legend.position="bottom",
+        legend.title = element_blank());p.fun
+
+```
+
+## Save figure together
+
+```{r, warning = F}
+fig3 <- plot_grid(p.bac, p.fun, ncol = 2, nrow = 1,labels = c("A", "B"),label_size = 20, rel_widths = c(1,1.2));fig3
+fig3 <- plot_grid(p.bac, p.fun, ncol = 1, nrow = 2,labels = c("A", "B"),label_size = 20, rel_heights = c(1,1));fig3
+
+ggsave(filename = "../Data/output/Farm_Diff_Abund.svg", plot = fig3, width = 10, height = 8, device = "svg")
+```
