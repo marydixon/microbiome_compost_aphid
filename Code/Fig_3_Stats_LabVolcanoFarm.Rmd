@@ -82,7 +82,7 @@ OTU <- as.matrix(OTU)
 TAX = BAC_TAX[rownames(OTU),]
 samples = SAMPLE_DATA_FIELD[colnames(OTU),]
 
-#write.csv(samples, "Data/output/sample_data_field_switch_samples_bac.csv") # REM and NWF got switched in the second year. I read out the table to correct and then read back in.
+
 samples <- read.csv("../Data/output/sample_data_field_switch_samples_bac.csv")
 samples <- samples %>%
 mutate(Farm = as_factor(Farm)) %>%
@@ -109,7 +109,7 @@ OTU <- as.matrix(OTU)
 TAX = FUN_TAX[rownames(OTU),]
 samples = SAMPLE_DATA_FIELD[colnames(OTU),]
 
-#write.csv(samples, "Data/output/sample_data_field_switch_samples_fun.csv") # REM and NWF got switched in the second year. I read out the table to correct and then read back in.
+
 samples <- read.csv("../Data/output/sample_data_field_switch_samples_fun.csv")
 samples <- samples %>%
 mutate(Farm = as_factor(Farm)) %>%

@@ -419,8 +419,6 @@ fun_compost_tse = mia::convertFromPhyloseq(fun_compost_phyloseq)
 
 ## Run ancombc
 ```{r, message=F, warning=F}
-###runs ancombc2 again for fungi and bacteria, but at the species level
-#for bacteria
 set.seed(123)
 Sys.time()
 compost_ancom_bac_SPE = ancombc2(data = bac_compost_tse, assay_name = "counts", tax_level = "Species",
@@ -436,7 +434,6 @@ compost_ancom_bac_SPE = ancombc2(data = bac_compost_tse, assay_name = "counts", 
                                  mdfdr_control = list(fwer_ctrl_method = "holm", B = 100),
                                  trend_control = NULL)
 Sys.time()
-#for fungi
 set.seed(123)
 Sys.time() 
 compost_ancom_fun_SPE = ancombc2(data = fun_compost_tse, assay_name = "counts", tax_level = "Species",

@@ -112,7 +112,6 @@ assayNames(em_tse) <- "counts"
 
 ### Model for permanova
 ```{r, message = F}
-# Adonis - Mary code
 P.bac.count <- convertToPhyloseq(em_tse,assay.type = "counts")
 P.bac.rel = transform_sample_counts(P.bac.count, function(x) x / sum(x))
 d <- data.frame(sample_data(P.bac.rel))
